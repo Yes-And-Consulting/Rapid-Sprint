@@ -10,7 +10,7 @@ const phases = [
 
 const defaultQuestions = [
   "What was the hardest part of the current experience?",
-  "Where did the participant hesitate, work around, or express frustration?",
+  "Where did the interviewee hesitate, work around, or express frustration?",
   "What would make the experience meaningfully better?",
 ];
 
@@ -32,7 +32,6 @@ const seedIdeas = [
 const state = loadState();
 let mediaRecorder = null;
 let audioChunks = [];
-let recognition = null;
 let recordingStartedAt = null;
 let timerId = null;
 
@@ -74,8 +73,8 @@ function appShell(content) {
       <header class="topbar">
         <div class="brand"><span class="mark">RS</span><span>${escapeHtml(state.workshopName)}</span></div>
         <div class="mode-switch" aria-label="Mode">
-          <button class="${state.mode === "participant" ? "active" : ""}" data-mode="participant">Participant</button>
-          <button class="${state.mode === "pm" ? "active" : ""}" data-mode="pm">PM</button>
+          <button class="${state.mode === "participant" ? "active" : ""}" data-mode="participant">Designer</button>
+          <button class="${state.mode === "pm" ? "active" : ""}" data-mode="pm">Facilitator</button>
         </div>
       </header>
       <section class="workspace">${content}</section>
@@ -101,7 +100,7 @@ function renderParticipant() {
       <div class="hero">
         <div>
           <h1>Join the sprint from your phone.</h1>
-          <p class="lead">Enter your name to submit interview notes, suggest missing ideas, and rank your top three when the facilitator opens voting.</p>
+          <p class="lead">Designers enter their name to submit interview notes, suggest missing ideas, and rank their top three when the facilitator opens voting.</p>
         </div>
         <form class="panel panel-pad grid" id="joinForm">
           <div class="field">
@@ -136,7 +135,7 @@ function renderTranscriptScreen(participant) {
       <section class="grid">
         <div>
           <h1>Capture your interview.</h1>
-          <p class="lead">Record audio, upload a file, or paste the transcript. Review the text before submitting it for synthesis.</p>
+          <p class="lead">Record audio or upload a file. Whisper will draft the transcript here, then you can review the text before submitting it for synthesis.</p>
         </div>
         <div class="panel panel-pad">
           <h3>Interview questions</h3>
@@ -157,13 +156,13 @@ function renderTranscriptScreen(participant) {
           </div>
           <div id="audioPreview" class="audio-list"></div>
           <input type="file" id="audioUpload" accept="audio/*">
-          <p class="note">Live speech-to-text uses your browser when available. The editable transcript box is the source of truth.</p>
+          <p class="note">Whisper transcription runs through the local workshop server. The editable transcript box is the source of truth.</p>
         </div>
         <div class="field">
           <label for="transcript">Transcript</label>
-          <textarea id="transcript" placeholder="Paste transcript here, or record audio and let the browser draft it...">${escapeHtml(participant.transcript || "")}</textarea>
+          <textarea id="transcript" placeholder="Record audio or upload a file. The Whisper transcript will appear here for review before you submit.">${escapeHtml(participant.transcript || "")}</textarea>
         </div>
-        <button type="submit">${isSubmitted ? "Update transcript" : "Submit transcript"}</button>
+        <button type="submit" id="submitTranscript">${isSubmitted ? "Update transcript" : "Submit transcript"}</button>
         ${isSubmitted ? `<p class="note">Submitted. You can still edit until the facilitator advances.</p>` : ""}
       </form>
     </div>
@@ -248,7 +247,7 @@ function renderPm() {
   return `
     ${renderPhaseStrip()}
     <div class="grid three">
-      <div class="stat"><span class="muted">Participants</span><strong>${counts.participants}</strong></div>
+      <div class="stat"><span class="muted">Designers</span><strong>${counts.participants}</strong></div>
       <div class="stat"><span class="muted">Transcripts</span><strong>${counts.transcripts}</strong></div>
       <div class="stat"><span class="muted">Rankings</span><strong>${counts.votes}</strong></div>
     </div>
@@ -288,7 +287,7 @@ function renderPm() {
     <div class="grid two" style="margin-top: 18px">
       <section class="panel panel-pad grid">
         <h2>Submissions</h2>
-        ${state.participants.length ? state.participants.map(renderSubmission).join("") : `<p class="muted">No participants yet.</p>`}
+        ${state.participants.length ? state.participants.map(renderSubmission).join("") : `<p class="muted">No Designers yet.</p>`}
       </section>
       <section class="panel panel-pad grid">
         <h2>Results</h2>
@@ -296,7 +295,7 @@ function renderPm() {
       </section>
     </div>
     <section class="panel panel-pad grid" style="margin-top: 18px">
-      <h2>Participant additions</h2>
+      <h2>Designer additions</h2>
       ${renderParticipantAdditions()}
     </section>
   `;
@@ -349,7 +348,7 @@ function renderSubmission(participant) {
 function renderResults() {
   const results = calculateResults();
   if (!results.length) {
-    return `<p class="muted">Rankings will appear here after participants submit their top three.</p>`;
+    return `<p class="muted">Rankings will appear here after Designers submit their top three.</p>`;
   }
 
   return `<div class="grid">${results.map((idea) => `
@@ -366,7 +365,7 @@ function renderParticipantAdditions() {
   );
 
   if (!additions.length) {
-    return `<p class="muted">Participant “Other” ideas will appear here before ranking.</p>`;
+    return `<p class="muted">Designer “Other” ideas will appear here before ranking.</p>`;
   }
 
   return `<div class="grid three">${additions.map((idea) => {
@@ -499,7 +498,7 @@ function bindPm() {
   });
 
   document.querySelector("#resetWorkshop")?.addEventListener("click", () => {
-    if (!confirm("Reset this workshop? This clears local participants, transcripts, ideas, and votes.")) return;
+    if (!confirm("Reset this workshop? This clears local Designers, transcripts, ideas, and votes.")) return;
     localStorage.removeItem(STORAGE_KEY);
     Object.assign(state, loadState());
     render();
@@ -518,10 +517,11 @@ async function startRecording() {
   mediaRecorder.ondataavailable = (event) => audioChunks.push(event.data);
   mediaRecorder.onstop = () => {
     stream.getTracks().forEach((track) => track.stop());
-    renderAudioPreview(new Blob(audioChunks, { type: mediaRecorder.mimeType }));
+    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+    renderAudioPreview(blob);
+    transcribeAudio(blob, "designer-recording.webm");
   };
   mediaRecorder.start();
-  startSpeechRecognition();
   recordingStartedAt = Date.now();
   timerId = window.setInterval(updateTimer, 500);
   document.querySelector("#recordBtn").disabled = true;
@@ -534,37 +534,11 @@ function stopRecording() {
   if (mediaRecorder?.state === "recording") {
     mediaRecorder.stop();
   }
-  if (recognition) {
-    recognition.stop();
-    recognition = null;
-  }
   window.clearInterval(timerId);
   document.querySelector("#recordBtn").disabled = false;
   document.querySelector("#stopBtn").disabled = true;
   document.querySelector("#recordingStatus").className = "muted";
-  document.querySelector("#recordingStatus").textContent = "Recording saved. Review transcript before submitting.";
-}
-
-function startSpeechRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) return;
-
-  recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = "en-US";
-  recognition.onresult = (event) => {
-    const transcript = Array.from(event.results)
-      .map((result) => result[0].transcript)
-      .join(" ");
-    const box = document.querySelector("#transcript");
-    box.value = `${box.dataset.committed || ""} ${transcript}`.trim();
-  };
-  recognition.onend = () => {
-    const box = document.querySelector("#transcript");
-    if (box) box.dataset.committed = box.value;
-  };
-  recognition.start();
+  document.querySelector("#recordingStatus").textContent = "Recording saved. Whisper is preparing the transcript.";
 }
 
 function updateTimer() {
@@ -578,13 +552,51 @@ function renderAudioPreview(blob) {
   const url = URL.createObjectURL(blob);
   const preview = document.querySelector("#audioPreview");
   if (!preview) return;
-  preview.innerHTML = `<audio controls src="${url}"></audio><p class="note">Audio is preview-only in this static MVP. Submit the transcript text after review.</p>`;
+  preview.innerHTML = `<audio controls src="${url}"></audio><p class="note">Whisper will place the transcript in the text box. Review it, then click submit.</p>`;
 }
 
 function handleAudioUpload(event) {
   const file = event.target.files?.[0];
   if (!file) return;
   renderAudioPreview(file);
+  transcribeAudio(file, file.name);
+}
+
+async function transcribeAudio(blob, filename) {
+  const status = document.querySelector("#recordingStatus");
+  const submit = document.querySelector("#submitTranscript");
+  const transcript = document.querySelector("#transcript");
+  if (!status || !transcript) return;
+
+  const formData = new FormData();
+  formData.append("audio", blob, filename);
+
+  status.className = "timer";
+  status.textContent = "Transcribing with Whisper...";
+  if (submit) submit.disabled = true;
+
+  try {
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || "Whisper transcription failed.");
+    }
+
+    const result = await response.json();
+    transcript.value = result.text || "";
+    status.className = "muted";
+    status.textContent = "Transcript ready. Review it, then click submit.";
+  } catch (error) {
+    status.className = "recording";
+    status.textContent = "Whisper is not connected. Start the Python server, or paste the transcript manually.";
+    console.error(error);
+  } finally {
+    if (submit) submit.disabled = false;
+  }
 }
 
 function generateIdeasFromTranscripts() {
