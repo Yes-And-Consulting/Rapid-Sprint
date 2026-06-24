@@ -2,14 +2,14 @@
 
 A browser-based rapid AI design sprint workshop app with two views:
 
-- **Designer**: record interview audio, review a free browser-generated live transcript, submit, add missing ideas, and rank top three ideas.
+- **Designer**: capture a free browser-generated live transcript, submit it, add missing ideas, and rank top three ideas.
 - **Facilitator**: monitor submissions, generate/edit ideas, review Designer additions, open ranking, and reveal the result.
 
 ## GitHub Pages Version
 
 This app now works as a static GitHub Pages site with no paid API, no server, and no secrets.
 
-The hosted version uses the browser's built-in speech recognition while recording. It works best in Chrome and Edge on HTTPS, including GitHub Pages. Browsers that do not support speech recognition can still record or upload audio for playback, then paste or type the transcript into the editable transcript box.
+The hosted version uses the browser's built-in speech recognition to write directly into the transcript box. It works best in Chrome and Edge on HTTPS, including GitHub Pages. Browsers that do not support speech recognition can still paste or type the transcript into the editable transcript box.
 
 ## Optional Local Whisper Server
 

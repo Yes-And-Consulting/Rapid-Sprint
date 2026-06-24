@@ -328,15 +328,6 @@ h3 {
   font-weight: 850;
 }
 
-.audio-list {
-  display: grid;
-  gap: 8px;
-}
-
-audio {
-  width: 100%;
-}
-
 .screen-result {
   min-height: calc(100vh - 70px);
   display: grid;

@@ -30,11 +30,10 @@ const seedIdeas = [
 ];
 
 const state = loadState();
-let mediaRecorder = null;
-let audioChunks = [];
 let recordingStartedAt = null;
 let timerId = null;
 let speechRecognition = null;
+let isTranscribing = false;
 let liveTranscript = "";
 let transcriptBeforeRecording = "";
 let accumulatedSpeechTranscript = "";
@@ -140,7 +139,7 @@ function renderTranscriptScreen(participant) {
       <section class="grid">
         <div>
           <h1>Capture your interview.</h1>
-          <p class="lead">Record audio in Chrome or Edge to draft a free live transcript in the browser, then review the text before submitting it for synthesis.</p>
+          <p class="lead">Start live transcription in Chrome or Edge, capture the interview directly into text, then review it before submitting it for synthesis.</p>
         </div>
         <div class="panel panel-pad">
           <h3>Interview questions</h3>
@@ -153,19 +152,17 @@ function renderTranscriptScreen(participant) {
           <input value="${escapeAttr(participant.name)}" id="participantNameEdit">
         </div>
         <div class="grid">
-          <h3>Record audio</h3>
+          <h3>Live transcription</h3>
           <div class="row">
-            <button type="button" id="recordBtn">Start recording</button>
+            <button type="button" id="recordBtn">Start transcript</button>
             <button type="button" class="secondary" id="stopBtn" disabled>Stop</button>
             <span id="recordingStatus" class="muted">Ready</span>
           </div>
-          <div id="audioPreview" class="audio-list"></div>
-          <input type="file" id="audioUpload" accept="audio/*">
-          <p class="note">GitHub Pages uses browser speech recognition while you record. Uploaded audio can be reviewed here, then pasted or typed into the transcript box.</p>
+          <p class="note">GitHub Pages uses browser speech recognition, so the transcript appears live without saving audio.</p>
         </div>
         <div class="field">
           <label for="transcript">Transcript</label>
-          <textarea id="transcript" placeholder="Record in Chrome or Edge for live transcription, or paste/type the transcript here.">${escapeHtml(participant.transcript || "")}</textarea>
+          <textarea id="transcript" placeholder="Start live transcription in Chrome or Edge, or paste/type the transcript here.">${escapeHtml(participant.transcript || "")}</textarea>
         </div>
         <button type="submit" id="submitTranscript">${isSubmitted ? "Update transcript" : "Submit transcript"}</button>
         ${isSubmitted ? `<p class="note">Submitted. You can still edit until the facilitator advances.</p>` : ""}
@@ -414,7 +411,6 @@ function bindParticipant() {
 
   document.querySelector("#recordBtn")?.addEventListener("click", startRecording);
   document.querySelector("#stopBtn")?.addEventListener("click", stopRecording);
-  document.querySelector("#audioUpload")?.addEventListener("change", handleAudioUpload);
 
   document.querySelector("#otherIdeaForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -510,28 +506,21 @@ function bindPm() {
   });
 }
 
-async function startRecording() {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    document.querySelector("#recordingStatus").textContent = "Recording is not supported here.";
+function startRecording() {
+  if (!getSpeechRecognitionConstructor()) {
+    document.querySelector("#recordingStatus").textContent = "Live transcription is not supported in this browser.";
     return;
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  audioChunks = [];
   transcriptBeforeRecording = document.querySelector("#transcript")?.value.trim() || "";
   liveTranscript = "";
   accumulatedSpeechTranscript = "";
   currentSpeechTranscript = "";
-  startSpeechRecognition();
-  mediaRecorder = new MediaRecorder(stream);
-  mediaRecorder.ondataavailable = (event) => audioChunks.push(event.data);
-  mediaRecorder.onstop = () => {
-    stream.getTracks().forEach((track) => track.stop());
-    stopSpeechRecognition();
-    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
-    renderAudioPreview(blob);
-  };
-  mediaRecorder.start();
+  isTranscribing = true;
+  if (!startSpeechRecognition()) {
+    isTranscribing = false;
+    return;
+  }
   recordingStartedAt = Date.now();
   timerId = window.setInterval(updateTimer, 500);
   document.querySelector("#recordBtn").disabled = true;
@@ -541,44 +530,22 @@ async function startRecording() {
 }
 
 function stopRecording() {
-  if (mediaRecorder?.state === "recording") {
-    mediaRecorder.stop();
-  }
+  isTranscribing = false;
+  stopSpeechRecognition();
   window.clearInterval(timerId);
   document.querySelector("#recordBtn").disabled = false;
   document.querySelector("#stopBtn").disabled = true;
   document.querySelector("#recordingStatus").className = "muted";
   document.querySelector("#recordingStatus").textContent = liveTranscript
-    ? "Recording saved. Review the live transcript, then click submit."
-    : "Recording saved. Add or paste the transcript before submitting.";
+    ? "Transcript captured. Review it, then click submit."
+    : "No transcript was captured. Try again or paste notes before submitting.";
 }
 
 function updateTimer() {
   const elapsed = Math.floor((Date.now() - recordingStartedAt) / 1000);
   const minutes = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const seconds = String(elapsed % 60).padStart(2, "0");
-  const transcriptionStatus = getSpeechRecognitionConstructor()
-    ? "with live transcript"
-    : "without live transcript";
-  document.querySelector("#recordingStatus").textContent = `Recording ${minutes}:${seconds} ${transcriptionStatus}`;
-}
-
-function renderAudioPreview(blob) {
-  const url = URL.createObjectURL(blob);
-  const preview = document.querySelector("#audioPreview");
-  if (!preview) return;
-  preview.innerHTML = `<audio controls src="${url}"></audio><p class="note">Use the audio preview to review anything the live transcript missed before you submit.</p>`;
-}
-
-function handleAudioUpload(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  renderAudioPreview(file);
-  const status = document.querySelector("#recordingStatus");
-  if (status) {
-    status.className = "muted";
-    status.textContent = "Audio loaded. GitHub Pages cannot transcribe uploaded files, so paste or type the transcript below.";
-  }
+  document.querySelector("#recordingStatus").textContent = `Transcribing ${minutes}:${seconds}`;
 }
 
 function getSpeechRecognitionConstructor() {
@@ -592,9 +559,9 @@ function startSpeechRecognition() {
 
   if (!SpeechRecognition || !transcript) {
     if (status) {
-      status.textContent = "Recording audio. Live transcription is not supported in this browser.";
+      status.textContent = "Live transcription is not supported in this browser.";
     }
-    return;
+    return false;
   }
 
   speechRecognition = new SpeechRecognition();
@@ -623,12 +590,18 @@ function startSpeechRecognition() {
   speechRecognition.onerror = (event) => {
     if (status) {
       status.className = "recording";
-      status.textContent = `Live transcription stopped: ${event.error}. You can still use the audio preview and paste notes.`;
+      status.textContent = `Live transcription stopped: ${event.error}. You can still paste or type notes.`;
+    }
+    if (["not-allowed", "service-not-allowed"].includes(event.error)) {
+      isTranscribing = false;
+      window.clearInterval(timerId);
+      document.querySelector("#recordBtn").disabled = false;
+      document.querySelector("#stopBtn").disabled = true;
     }
   };
 
   speechRecognition.onend = () => {
-    if (mediaRecorder?.state === "recording") {
+    if (isTranscribing) {
       accumulatedSpeechTranscript = [accumulatedSpeechTranscript, currentSpeechTranscript].filter(Boolean).join(" ").trim();
       currentSpeechTranscript = "";
       try {
@@ -642,10 +615,16 @@ function startSpeechRecognition() {
   try {
     speechRecognition.start();
     if (status) {
-      status.textContent = "Recording with live browser transcription...";
+      status.textContent = "Live transcription started...";
     }
+    return true;
   } catch (error) {
     console.warn("Speech recognition could not start.", error);
+    if (status) {
+      status.className = "recording";
+      status.textContent = "Live transcription could not start. Check microphone permission or paste notes.";
+    }
+    return false;
   }
 }
 
