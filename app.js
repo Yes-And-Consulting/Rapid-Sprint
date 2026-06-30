@@ -6,6 +6,8 @@ const ROLE = {
 };
 
 const FALLBACK_PAGES_URL = "https://mcnei.github.io/RapidSprint/";
+const RAW_API_BASE = new URLSearchParams(window.location.search).get("api") || window.RAPIDSPRINT_API_BASE || "";
+const API_BASE = RAW_API_BASE.replace(/\/$/, "");
 
 const STAGES = {
   HOME: "home",
@@ -194,6 +196,10 @@ const state = loadState();
 let speechRecognition = null;
 let isTranscribing = false;
 let currentRecordingQuestionId = "";
+let syncTimerId = null;
+let sprintSaveTimerId = null;
+let isApplyingRemoteSprint = false;
+let apiAvailable = false;
 
 function createSprint(overrides = {}) {
   const id = overrides.id || uid("sprint");
@@ -210,6 +216,7 @@ function createSprint(overrides = {}) {
     facilitatorAddedIdeas: overrides.facilitatorAddedIdeas || [],
     votes: overrides.votes || [],
     selectedIdea: overrides.selectedIdea || null,
+    updatedAt: overrides.updatedAt || "",
   };
 }
 
@@ -276,6 +283,9 @@ function setState(mutator) {
   }
   saveState();
   render();
+  if (!isApplyingRemoteSprint && state.role === ROLE.FACILITATOR) {
+    queueSprintSave();
+  }
 }
 
 function uid(prefix) {
@@ -287,6 +297,7 @@ function makeInviteLink(sprintId, stage = STAGES.INTERVIEWS) {
   url.searchParams.set("sprint", sprintId);
   url.searchParams.set("role", ROLE.HUMAN);
   url.searchParams.set("stage", stage);
+  if (API_BASE) url.searchParams.set("api", API_BASE);
   return url.toString();
 }
 
@@ -304,6 +315,104 @@ function makeQrUrl(value) {
 
 function isHumanInviteRoute() {
   return new URLSearchParams(window.location.search).get("role") === ROLE.HUMAN;
+}
+
+function getSprintIdFromUrl() {
+  return new URLSearchParams(window.location.search).get("sprint");
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  if (!response.ok) {
+    throw new Error(`API ${response.status}`);
+  }
+  return response.json();
+}
+
+function queueSprintSave() {
+  window.clearTimeout(sprintSaveTimerId);
+  sprintSaveTimerId = window.setTimeout(saveSprintToApi, 250);
+}
+
+async function saveSprintToApi() {
+  try {
+    const result = await apiRequest(`/api/sprints/${encodeURIComponent(state.sprint.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ sprint: state.sprint }),
+    });
+    apiAvailable = true;
+    applyRemoteSprint(result.sprint);
+  } catch (error) {
+    apiAvailable = false;
+  }
+}
+
+async function fetchSprintFromApi() {
+  const sprintId = getSprintIdFromUrl() || state.sprint.id;
+  if (!sprintId) return;
+  try {
+    const result = await apiRequest(`/api/sprints/${encodeURIComponent(sprintId)}`);
+    apiAvailable = true;
+    applyRemoteSprint(result.sprint);
+  } catch (error) {
+    apiAvailable = false;
+  }
+}
+
+function applyRemoteSprint(remoteSprint) {
+  if (!remoteSprint?.id) return;
+  if (remoteSprint.updatedAt && remoteSprint.updatedAt === state.sprint.updatedAt) return;
+  const activeQuestionId = document.querySelector("#humanQuestionForm")?.dataset.questionId;
+  const activeResponse = document.querySelector("#humanResponse")?.value;
+  if (state.role === ROLE.HUMAN && activeQuestionId && activeResponse !== undefined) {
+    state.humanDraft.responses[activeQuestionId] = activeResponse;
+  }
+  isApplyingRemoteSprint = true;
+  state.sprint = createSprint({
+    ...remoteSprint,
+    inviteLink: makeInviteLink(remoteSprint.id, remoteSprint.currentStage || STAGES.INTERVIEWS),
+  });
+  saveState();
+  render();
+  isApplyingRemoteSprint = false;
+}
+
+function startSync() {
+  window.clearInterval(syncTimerId);
+  fetchSprintFromApi();
+  syncTimerId = window.setInterval(fetchSprintFromApi, 2000);
+}
+
+async function submitInterviewToApi(responses) {
+  try {
+    const result = await apiRequest(`/api/sprints/${encodeURIComponent(state.sprint.id)}/interviews`, {
+      method: "POST",
+      body: JSON.stringify({
+        humanId: state.humanSessionId,
+        responses,
+      }),
+    });
+    apiAvailable = true;
+    applyRemoteSprint(result.sprint);
+  } catch (error) {
+    apiAvailable = false;
+  }
+}
+
+async function submitVoteToApi(vote) {
+  try {
+    const result = await apiRequest(`/api/sprints/${encodeURIComponent(state.sprint.id)}/votes`, {
+      method: "POST",
+      body: JSON.stringify(vote),
+    });
+    apiAvailable = true;
+    applyRemoteSprint(result.sprint);
+  } catch (error) {
+    apiAvailable = false;
+  }
 }
 
 function appShell(content) {
@@ -796,14 +905,14 @@ function bindHuman() {
     event.preventDefault();
     const speakerName = event.target.elements.speakerName.value.trim();
     if (!speakerName) return;
+    let submittedResponses = [];
     setState((draft) => {
       draft.humanDraft.speakerName = speakerName;
       draft.humanDraft.submitted = true;
       const questions = getInterviewQuestions();
       const submittedAt = new Date().toISOString();
       draft.sprint.interviewResponses = draft.sprint.interviewResponses.filter((response) => response.humanId !== draft.humanSessionId);
-      questions.forEach((question) => {
-        draft.sprint.interviewResponses.push({
+      submittedResponses = questions.map((question) => ({
           id: uid("response"),
           humanId: draft.humanSessionId,
           questionId: question.id,
@@ -813,9 +922,10 @@ function bindHuman() {
           transcript: draft.humanDraft.responses[question.id] || "",
           speakerName,
           submittedAt,
-        });
-      });
+      }));
+      draft.sprint.interviewResponses.push(...submittedResponses);
     });
+    submitInterviewToApi(submittedResponses);
   });
 
   document.querySelector("#humanVoteForm")?.addEventListener("submit", (event) => {
@@ -829,15 +939,17 @@ function bindHuman() {
       alert("Please choose three different ideas.");
       return;
     }
+    const vote = {
+      id: uid("vote"),
+      humanId: state.humanSessionId,
+      ranked,
+      submittedAt: new Date().toISOString(),
+    };
     setState((draft) => {
       draft.sprint.votes = draft.sprint.votes.filter((vote) => vote.humanId !== draft.humanSessionId);
-      draft.sprint.votes.push({
-        id: uid("vote"),
-        humanId: draft.humanSessionId,
-        ranked,
-        submittedAt: new Date().toISOString(),
-      });
+      draft.sprint.votes.push(vote);
     });
+    submitVoteToApi(vote);
   });
 }
 
@@ -1103,6 +1215,11 @@ window.addEventListener("storage", () => {
 });
 
 const queryRole = new URLSearchParams(window.location.search).get("role");
+const querySprint = getSprintIdFromUrl();
+if (querySprint) {
+  state.sprint.id = querySprint;
+  state.sprint.inviteLink = makeInviteLink(querySprint, state.sprint.currentStage || STAGES.INTERVIEWS);
+}
 if (queryRole === ROLE.HUMAN && state.role !== ROLE.HUMAN) {
   state.role = ROLE.HUMAN;
 }
@@ -1112,4 +1229,5 @@ if (queryRole === ROLE.HUMAN && Object.values(STAGES).includes(queryStage)) {
 }
 if (queryRole === ROLE.HUMAN) saveState();
 
+startSync();
 render();
