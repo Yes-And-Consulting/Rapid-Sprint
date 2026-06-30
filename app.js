@@ -1,59 +1,266 @@
-const STORAGE_KEY = "rapidSprint.v1";
+const STORAGE_KEY = "rapidSprint.v2";
 
-const phases = [
-  ["collect", "Collect transcripts"],
-  ["analyze", "Generate ideas"],
-  ["others", "Collect other ideas"],
-  ["rank", "Rank top 3"],
-  ["results", "Reveal result"],
+const ROLE = {
+  FACILITATOR: "facilitator",
+  HUMAN: "human",
+};
+
+const FALLBACK_PAGES_URL = "https://mcnei.github.io/RapidSprint/";
+
+const STAGES = {
+  HOME: "home",
+  CREATE: "create",
+  REVIEW_QUESTIONS: "review_questions",
+  INTERVIEWS: "interviews",
+  IDEAS: "ideas",
+  VOTING: "voting",
+  PROTOTYPE: "prototype",
+};
+
+const facilitatorFlow = [
+  [STAGES.HOME, "Home"],
+  [STAGES.CREATE, "Create Sprint"],
+  [STAGES.REVIEW_QUESTIONS, "Review & Edit Interview Questions"],
+  [STAGES.INTERVIEWS, "Interview Stage"],
+  [STAGES.IDEAS, "Generated Ideas"],
+  [STAGES.VOTING, "Voting Live"],
+  [STAGES.PROTOTYPE, "Prototype & Export"],
 ];
 
-const defaultQuestions = [
-  "What was the hardest part of the current experience?",
-  "Where did the interviewee hesitate, work around, or express frustration?",
-  "What would make the experience meaningfully better?",
+const humanFlow = [
+  "Waiting Room",
+  "Interview Question 1",
+  "Interview Question 2",
+  "Interview Question 3",
+  "Submit Interview",
+  "After Submit / Waiting",
+  "Idea Voting",
+  "Prototype & Done",
 ];
 
-const seedIdeas = [
-  {
-    title: "Simplify the first step",
-    description: "Reduce the amount of setup needed before someone can start the core task.",
+const promptLibrary = {
+  generateInterviewQuestions: {
+    id: "generate_interview_questions",
+    version: "1.0.0",
+    inputs: {
+      challenge: "Description or focus question entered by the facilitator.",
+    },
+    template: `You are an expert service designer, UX researcher, and facilitator.
+
+Your job is to create three interview questions that help uncover real human experiences related to a design challenge.
+
+These questions will be used during a rapid empathy interview, so they must be conversational, easy to understand, and encourage storytelling.
+
+Using the facilitator's challenge, generate exactly three interview questions.
+
+The questions should explore:
+1. Bright Spots: what is already working well, successful, enjoyable, or effective.
+2. Pain Points: frustrations, blockers, inefficiencies, unmet needs, or moments of friction.
+3. Improvements: improvements, ideal outcomes, or changes that would make the experience better.
+
+Requirements:
+- Tailor all questions specifically to the challenge.
+- Encourage stories and examples.
+- Avoid yes/no questions.
+- Use plain language.
+- Keep each question under 25 words.
+- Do not suggest solutions.
+- Return only valid JSON.
+
+Challenge:
+{{challenge}}
+
+Expected JSON:
+{
+  "questions": [
+    {
+      "type": "bright_spots",
+      "title": "Bright Spots",
+      "question": ""
+    },
+    {
+      "type": "pain_points",
+      "title": "Pain Points",
+      "question": ""
+    },
+    {
+      "type": "future_improvements",
+      "title": "Improvements",
+      "question": ""
+    }
+  ]
+}`,
+    expectedJson: {
+      questions: [
+        { type: "bright_spots", title: "Bright Spots", question: "" },
+        { type: "pain_points", title: "Pain Points", question: "" },
+        { type: "future_improvements", title: "Improvements", question: "" },
+      ],
+    },
   },
-  {
-    title: "Create guided decision points",
-    description: "Add lightweight prompts at confusing moments so people know what to do next.",
+  generateIdeas: {
+    id: "generate_ideas",
+    version: "1.0.0",
+    inputs: {
+      challenge: "...",
+      interview_questions: [],
+      responses: [],
+    },
+    template: `You are an expert service designer, facilitator, and innovation strategist.
+
+Your job is to analyze interview responses from a rapid design sprint and generate actionable ideas that address the needs, frustrations, and opportunities expressed by Humans.
+
+The ideas will immediately be reviewed by the Facilitator and then presented to Humans for voting, so they should be easy to understand, meaningfully different from one another, and useful for discussion.
+
+Challenge:
+{{challenge}}
+
+Interview Questions:
+{{interview_questions}}
+
+Interview Responses:
+{{responses}}
+
+Analyze all interview responses.
+
+Look for:
+- recurring needs
+- pain points
+- bright spots worth expanding
+- unmet needs
+- bottlenecks
+- workarounds
+- opportunities
+- unexpected insights
+- repeated requests
+- ideas that multiple Humans are pointing toward
+
+Generate exactly 10 ideas.
+
+Each idea should:
+- directly relate to the interview data
+- solve a meaningful problem
+- be understandable in under 10 seconds
+- be distinct from every other idea
+- avoid duplicates
+- avoid vague business jargon
+- avoid implementation details
+- be suitable for voting
+- be broad enough for Facilitators to edit, merge, split, rename, remove, or add to before voting
+
+For each idea provide:
+- short title
+- one-sentence description
+- confidence score based on evidence
+
+Confidence:
+High = multiple Humans support this idea.
+Medium = some evidence exists but interpretation was required.
+Low = interesting opportunity with limited evidence.
+
+Return only valid JSON.
+
+Expected JSON:
+{
+  "ideas": [
+    {
+      "id": 1,
+      "title": "",
+      "description": "",
+      "confidence": "High"
+    }
+  ]
+}`,
+    expectedJson: {
+      ideas: [{ id: 1, title: "", description: "", confidence: "High" }],
+    },
   },
-  {
-    title: "Make progress visible",
-    description: "Show what has been completed, what is happening now, and what remains.",
-  },
+};
+
+const ideaSeeds = [
+  ["Simpler first step", "Make the first action obvious and easy to complete."],
+  ["Clear progress cues", "Show what has happened, what is happening now, and what comes next."],
+  ["Better handoff moments", "Help people pass context forward without repeating themselves."],
+  ["Faster support path", "Give Humans a quicker way to get unstuck when friction appears."],
+  ["Plain-language guidance", "Replace confusing moments with concise prompts that explain the next decision."],
+  ["Personalized defaults", "Use known context to reduce repeated entry and setup effort."],
+  ["Visible confirmation", "Make successful actions feel reliable with timely, specific confirmations."],
+  ["Flexible timing", "Let Humans complete key steps in a rhythm that fits their real situation."],
+  ["Shared decision view", "Create one place where options, tradeoffs, and decisions are easy to compare."],
+  ["Recovery path", "Make it easy to revise, undo, or recover when something goes wrong."],
 ];
 
 const state = loadState();
-let recordingStartedAt = null;
-let timerId = null;
 let speechRecognition = null;
 let isTranscribing = false;
-let liveTranscript = "";
-let transcriptBeforeRecording = "";
-let accumulatedSpeechTranscript = "";
-let currentSpeechTranscript = "";
+let currentRecordingQuestionId = "";
+
+function createSprint(overrides = {}) {
+  const id = overrides.id || uid("sprint");
+  return {
+    id,
+    title: overrides.title || "Rapid Sprint",
+    challenge: overrides.challenge || "",
+    duration: overrides.duration || 45,
+    inviteLink: overrides.inviteLink || makeInviteLink(id, STAGES.INTERVIEWS),
+    currentStage: overrides.currentStage || STAGES.HOME,
+    interviewQuestions: overrides.interviewQuestions || [],
+    interviewResponses: overrides.interviewResponses || [],
+    generatedIdeas: overrides.generatedIdeas || [],
+    facilitatorAddedIdeas: overrides.facilitatorAddedIdeas || [],
+    votes: overrides.votes || [],
+    selectedIdea: overrides.selectedIdea || null,
+  };
+}
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
-    return JSON.parse(saved);
+    return normalizeState(JSON.parse(saved));
   }
 
+  return normalizeState({
+    role: ROLE.FACILITATOR,
+    sprint: createSprint(),
+    humanSessionId: uid("human"),
+    humanDraft: {
+      responses: {},
+      speakerName: "",
+      submitted: false,
+    },
+  });
+}
+
+function normalizeState(raw) {
+  if (raw.sprint) {
+    return {
+      role: raw.role || ROLE.FACILITATOR,
+      sprint: createSprint(raw.sprint),
+      humanSessionId: raw.humanSessionId || uid("human"),
+      humanDraft: raw.humanDraft || { responses: {}, speakerName: "", submitted: false },
+    };
+  }
+
+  const legacyQuestions = String(raw.questions || "")
+    .split("\n")
+    .filter(Boolean)
+    .map((question, index) => ({
+      id: `q${index + 1}`,
+      type: ["bright_spots", "pain_points", "future_improvements"][index] || "future_improvements",
+      title: ["Bright Spots", "Pain Points", "Improvements"][index] || `Question ${index + 1}`,
+      question,
+    }))
+    .slice(0, 3);
+
   return {
-    mode: "participant",
-    phase: "collect",
-    workshopName: "Rapid AI Design Sprint",
-    questions: defaultQuestions.join("\n"),
-    participants: [],
-    ideas: [],
-    votes: [],
-    currentParticipantId: "",
+    role: raw.mode === "participant" ? ROLE.HUMAN : ROLE.FACILITATOR,
+    sprint: createSprint({
+      title: raw.workshopName || "Rapid Sprint",
+      currentStage: STAGES.HOME,
+      interviewQuestions: legacyQuestions,
+    }),
+    humanSessionId: uid("human"),
+    humanDraft: { responses: {}, speakerName: "", submitted: false },
   };
 }
 
@@ -61,8 +268,12 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function setState(patch) {
-  Object.assign(state, patch);
+function setState(mutator) {
+  if (typeof mutator === "function") {
+    mutator(state);
+  } else {
+    Object.assign(state, mutator);
+  }
   saveState();
   render();
 }
@@ -71,15 +282,39 @@ function uid(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function makeInviteLink(sprintId, stage = STAGES.INTERVIEWS) {
+  const url = new URL(getLiveBaseUrl());
+  url.searchParams.set("sprint", sprintId);
+  url.searchParams.set("role", ROLE.HUMAN);
+  url.searchParams.set("stage", stage);
+  return url.toString();
+}
+
+function getLiveBaseUrl() {
+  const localHosts = new Set(["localhost", "127.0.0.1", "0.0.0.0", ""]);
+  if (window.location.protocol.startsWith("http") && !localHosts.has(window.location.hostname)) {
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+  return FALLBACK_PAGES_URL;
+}
+
+function makeQrUrl(value) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(value)}`;
+}
+
+function isHumanInviteRoute() {
+  return new URLSearchParams(window.location.search).get("role") === ROLE.HUMAN;
+}
+
 function appShell(content) {
   return `
     <div class="shell">
       <header class="topbar">
-        <div class="brand"><span class="mark">RS</span><span>${escapeHtml(state.workshopName)}</span></div>
-        <div class="mode-switch" aria-label="Mode">
-          <button class="${state.mode === "participant" ? "active" : ""}" data-mode="participant">Designer</button>
-          <button class="${state.mode === "pm" ? "active" : ""}" data-mode="pm">Facilitator</button>
-        </div>
+        <div class="brand"><span class="mark">RS</span><span>${escapeHtml(state.sprint.title)}</span></div>
+        ${isHumanInviteRoute() ? "" : `<div class="mode-switch" aria-label="Role">
+          <button class="${state.role === ROLE.HUMAN ? "active" : ""}" data-role="${ROLE.HUMAN}">Human</button>
+          <button class="${state.role === ROLE.FACILITATOR ? "active" : ""}" data-role="${ROLE.FACILITATOR}">Facilitator</button>
+        </div>`}
       </header>
       <section class="workspace">${content}</section>
     </div>
@@ -88,491 +323,551 @@ function appShell(content) {
 
 function render() {
   const app = document.querySelector("#app");
-  app.innerHTML = appShell(state.mode === "pm" ? renderPm() : renderParticipant());
+  app.innerHTML = appShell(state.role === ROLE.FACILITATOR ? renderFacilitator() : renderHuman());
   bindCommon();
-  state.mode === "pm" ? bindPm() : bindParticipant();
+  state.role === ROLE.FACILITATOR ? bindFacilitator() : bindHuman();
 }
 
-function renderParticipant() {
-  if (state.phase === "results") {
-    return renderParticipantResults();
-  }
+function renderFacilitator() {
+  const screen = {
+    [STAGES.HOME]: renderFacilitatorHome,
+    [STAGES.CREATE]: renderCreateSprint,
+    [STAGES.REVIEW_QUESTIONS]: renderReviewQuestions,
+    [STAGES.INTERVIEWS]: renderLiveDashboard,
+    [STAGES.IDEAS]: renderFacilitatorIdeas,
+    [STAGES.VOTING]: renderVotingLive,
+    [STAGES.PROTOTYPE]: renderPrototypeExport,
+  }[state.sprint.currentStage] || renderFacilitatorHome;
 
-  const participant = getCurrentParticipant();
-  if (!participant) {
-    return `
-      <div class="hero">
-        <div>
-          <h1>Join the sprint from your phone.</h1>
-          <p class="lead">Designers enter their name to submit interview notes, suggest missing ideas, and rank their top three when the facilitator opens voting.</p>
-        </div>
-        <form class="panel panel-pad grid" id="joinForm">
-          <div class="field">
-            <label for="participantName">Your name</label>
-            <input id="participantName" name="participantName" autocomplete="name" required placeholder="Alex Morgan">
-          </div>
-          <button type="submit">Join workshop</button>
-        </form>
-      </div>
-    `;
-  }
-
-  if (state.phase === "collect" || state.phase === "analyze") {
-    return renderTranscriptScreen(participant);
-  }
-
-  if (state.phase === "others") {
-    return renderOtherIdeasScreen(participant);
-  }
-
-  if (state.phase === "rank") {
-    return renderRankingScreen(participant);
-  }
-
-  return `<div class="panel panel-pad"><h2>Waiting for the facilitator</h2><p class="muted">This screen will update when the next activity starts.</p></div>`;
-}
-
-function renderTranscriptScreen(participant) {
-  const isSubmitted = Boolean(participant.transcript && participant.transcript.trim());
   return `
-    <div class="grid two">
-      <section class="grid">
-        <div>
-          <h1>Capture your interview.</h1>
-          <p class="lead">Start live transcription in Chrome or Edge, capture the interview directly into text, then review it before submitting it for synthesis.</p>
-        </div>
-        <div class="panel panel-pad">
-          <h3>Interview questions</h3>
-          <div class="grid">${state.questions.split("\n").filter(Boolean).map((q) => `<p class="submission">${escapeHtml(q)}</p>`).join("")}</div>
-        </div>
-      </section>
-      <form class="panel panel-pad grid" id="transcriptForm">
-        <div class="field">
-          <label>Name</label>
-          <input value="${escapeAttr(participant.name)}" id="participantNameEdit">
-        </div>
-        <div class="grid">
-          <h3>Live transcription</h3>
-          <div class="row">
-            <button type="button" id="recordBtn">Start transcript</button>
-            <button type="button" class="secondary" id="stopBtn" disabled>Stop</button>
-            <span id="recordingStatus" class="muted">Ready</span>
-          </div>
-          <p class="note">GitHub Pages uses browser speech recognition, so the transcript appears live without saving audio.</p>
-        </div>
-        <div class="field">
-          <label for="transcript">Transcript</label>
-          <textarea id="transcript" placeholder="Start live transcription in Chrome or Edge, or paste/type the transcript here.">${escapeHtml(participant.transcript || "")}</textarea>
-        </div>
-        <button type="submit" id="submitTranscript">${isSubmitted ? "Update transcript" : "Submit transcript"}</button>
-        ${isSubmitted ? `<p class="note">Submitted. You can still edit until the facilitator advances.</p>` : ""}
-      </form>
-    </div>
+    ${renderStageStrip()}
+    ${isActiveFacilitatorScreen() ? `<div class="facilitator-layout"><div>${screen()}</div>${renderInvitePanel()}</div>` : screen()}
   `;
 }
 
-function renderOtherIdeasScreen(participant) {
+function renderStageStrip() {
+  return `<div class="status-strip">${facilitatorFlow.map(([stage, label]) => `
+    <button type="button" class="phase ${state.sprint.currentStage === stage ? "active" : ""}" data-stage="${stage}">${escapeHtml(label)}</button>
+  `).join("")}</div>`;
+}
+
+function isActiveFacilitatorScreen() {
+  return [STAGES.INTERVIEWS, STAGES.VOTING, STAGES.PROTOTYPE].includes(state.sprint.currentStage);
+}
+
+function renderInvitePanel() {
+  const link = makeInviteLink(state.sprint.id, state.sprint.currentStage);
   return `
-    <div class="grid two">
+    <aside class="panel panel-pad invite-panel">
+      <p class="eyebrow">${escapeHtml(getInviteStageLabel())}</p>
+      <h2>${escapeHtml(getInviteHeading())}</h2>
+      <p class="muted">Copy and paste this link into your chat or email.</p>
+      <img class="qr-code" src="${escapeAttr(makeQrUrl(link))}" alt="QR code for ${escapeAttr(getInviteHeading())}">
+      <div class="field">
+        <label for="inviteLink">Join link</label>
+        <input id="inviteLink" value="${escapeAttr(link)}" readonly>
+      </div>
+      <button type="button" id="copyInviteLink">Copy Link</button>
+    </aside>
+  `;
+}
+
+function getInviteHeading() {
+  if (state.sprint.currentStage === STAGES.VOTING) return "Join Voting";
+  if (state.sprint.currentStage === STAGES.PROTOTYPE) return "Join Prototype";
+  return "Join Research Interview";
+}
+
+function getInviteStageLabel() {
+  if (state.sprint.currentStage === STAGES.VOTING) return "Join Now: Idea Voting";
+  if (state.sprint.currentStage === STAGES.PROTOTYPE) return "Join Now: Prototype";
+  return "Join Now: Empathy Interviews";
+}
+
+function renderFacilitatorHome() {
+  return `
+    <div class="hero">
       <section>
-        <h1>Anything missing?</h1>
-        <p class="lead">Review the generated ideas. Add ideas you think should be represented before top-three ranking begins.</p>
+        <h1>Facilitator manages the process.</h1>
+        <p class="lead">Humans contribute intelligence. AI accelerates in between.</p>
       </section>
       <section class="panel panel-pad grid">
-        <h3>Generated ideas</h3>
-        ${renderIdeas()}
-        <form class="grid" id="otherIdeaForm">
-          <div class="field">
-            <label for="otherTitle">Other idea</label>
-            <input id="otherTitle" required placeholder="A missing idea in one sentence">
-          </div>
-          <div class="field">
-            <label for="otherDescription">Why it matters</label>
-            <textarea id="otherDescription" placeholder="Optional detail"></textarea>
-          </div>
-          <button type="submit">Add idea</button>
-        </form>
-        <div class="grid">
-          <h3>Your added ideas</h3>
-          ${participant.otherIdeas?.length ? participant.otherIdeas.map(renderOtherIdea).join("") : `<p class="muted">No additions yet.</p>`}
-        </div>
+        <h2>Home</h2>
+        <p class="muted">Start a new Rapid Sprint or continue the current one.</p>
+        <button type="button" data-stage="${STAGES.CREATE}">Create Sprint</button>
       </section>
     </div>
   `;
 }
 
-function renderRankingScreen(participant) {
-  const ballot = getBallotIdeas(participant);
-  const existing = state.votes.find((vote) => vote.participantId === participant.id);
+function renderCreateSprint() {
   return `
-    <div class="grid">
-      <div>
-        <h1>Rank your top 3.</h1>
-        <p class="lead">Choose your first, second, and third choice. Your own “Other” ideas are included on your ballot.</p>
+    <form class="panel panel-pad grid narrow" id="createSprintForm">
+      <h1>Create Sprint</h1>
+      <div class="field">
+        <label for="sprintTitle">Title</label>
+        <input id="sprintTitle" name="title" required value="${escapeAttr(state.sprint.title)}">
       </div>
-      <form class="panel panel-pad grid" id="voteForm">
+      <div class="field">
+        <label for="challenge">Description of Need/Pain Point/Challenge</label>
+        <textarea id="challenge" name="challenge" required placeholder="Description or focus question entered by the facilitator.">${escapeHtml(state.sprint.challenge)}</textarea>
+      </div>
+      <button type="submit">Generate Interview Questions</button>
+    </form>
+  `;
+}
+
+function renderReviewQuestions() {
+  const questions = getInterviewQuestions();
+  return `
+    <form class="panel panel-pad grid" id="reviewQuestionsForm">
+      <h1>Review & Edit Interview Questions</h1>
+      <p class="lead">Edit the three AI-generated questions before sending them to Humans.</p>
+      ${questions.map((question, index) => `
+        <div class="field question-edit">
+          <label for="question-${index}">Question ${index + 1}: ${escapeHtml(question.title)}</label>
+          <input id="question-${index}" name="question${index}" value="${escapeAttr(question.question)}" required>
+        </div>
+      `).join("")}
+      <div class="row">
+        <button type="button" class="secondary" id="regenerateQuestions">Regenerate Questions</button>
+        <button type="submit">Confirm & Continue</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderLiveDashboard() {
+  const counts = getCounts();
+  return `
+    <section class="grid">
+      <div>
+        <h1>Interview Stage</h1>
+        <p class="lead">Humans answer one interview question at a time. Their submitted interviews appear here.</p>
+        <button type="button" id="goIdeas">Analyze and Generate Ideas</button>
+      </div>
+      <div class="grid three">
+        <div class="stat"><span class="muted">Humans submitted</span><strong>${counts.submitted}</strong></div>
+        <div class="stat"><span class="muted">Responses</span><strong>${counts.responses}</strong></div>
+        <div class="stat"><span class="muted">Votes</span><strong>${counts.votes}</strong></div>
+      </div>
+      <section class="panel panel-pad grid">
+        <h2>Interview Responses</h2>
+        ${state.sprint.interviewResponses.length ? state.sprint.interviewResponses.map(renderInterviewResponse).join("") : `<p class="muted">No Human interviews submitted yet.</p>`}
+      </section>
+    </section>
+  `;
+}
+
+function renderInterviewResponse(response) {
+  return `
+    <article class="submission">
+      <div class="row split">
+        <strong>${escapeHtml(response.speakerName || "Unnamed speaker")}</strong>
+        <span class="muted">${escapeHtml(formatDate(response.submittedAt))}</span>
+      </div>
+      <h3>${escapeHtml(response.questionTitle)}</h3>
+      <p class="muted">${escapeHtml(response.questionText)}</p>
+      <p>${escapeHtml(response.responseText || response.transcript || "")}</p>
+    </article>
+  `;
+}
+
+function renderFacilitatorIdeas() {
+  const ideas = getAllIdeas();
+  return `
+    <section class="grid">
+      <div>
+        <h1>Generated Ideas</h1>
+        <p class="lead">Review the generated ideas, then add Facilitator ideas before voting.</p>
+      </div>
+      <div class="row">
+        <button type="button" id="nextVoting" ${ideas.length ? "" : "disabled"}>Next: Voting</button>
+      </div>
+      <section class="panel panel-pad grid">
+        <h2>Idea Set</h2>
+        ${state.sprint.generatedIdeas.length ? `<h3>10 AI-generated ideas</h3><div class="grid">${state.sprint.generatedIdeas.map((idea) => renderIdea(idea, true)).join("")}</div>` : `<p class="muted">No AI-generated ideas yet.</p>`}
+        <form class="row add-idea-form" id="facilitatorIdeaForm">
+          <input id="facilitatorIdeaTitle" required placeholder="Type your idea here...">
+          <button type="submit">Add Idea</button>
+        </form>
+        ${state.sprint.facilitatorAddedIdeas.length ? `<h3>Facilitator ideas</h3><div class="grid">${state.sprint.facilitatorAddedIdeas.map((idea) => renderIdea(idea, true)).join("")}</div>` : ""}
+      </section>
+    </section>
+  `;
+}
+
+function renderVotingLive() {
+  const results = calculateResults();
+  return `
+    <section class="grid">
+      <div>
+        <h1>Voting Live</h1>
+        <p class="lead">Humans vote on the current idea set. Results update as votes arrive.</p>
+      </div>
+      <section class="panel panel-pad grid">
+        <h2>Live Results</h2>
+        ${results.length ? results.map(renderResultRow).join("") : `<p class="muted">No votes submitted yet.</p>`}
+      </section>
+      <div class="row">
+        <button type="button" id="selectTopIdea" ${results.length ? "" : "disabled"}>Select Top Idea</button>
+        <button type="button" id="goPrototype">Prototype & Export</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderResultRow(idea) {
+  return `
+    <div class="ballot-row row split">
+      <div>
+        <strong>${escapeHtml(idea.title)}</strong>
+        <p class="muted">${escapeHtml(idea.description || "")}</p>
+      </div>
+      <span class="score">${idea.voteCount}</span>
+    </div>
+  `;
+}
+
+function renderPrototypeExport() {
+  const selected = getSelectedIdea();
+  return `
+    <section class="grid">
+      <div>
+        <h1>Prototype & Export</h1>
+        <p class="lead">Carry the selected idea into prototyping and export the sprint record.</p>
+      </div>
+      <section class="panel panel-pad grid">
+        <h2>Selected Idea</h2>
+        ${selected ? renderIdea(selected) : `<p class="muted">No selected idea yet. Select one from Voting Live or continue with the highest vote count.</p>`}
+        <button type="button" id="exportData">Export JSON</button>
+      </section>
+    </section>
+  `;
+}
+
+function renderHuman() {
+  return `
+    <div class="mobile-flow-note">${humanFlow.map((label, index) => `<span class="${getHumanStepIndex() === index ? "active" : ""}">${escapeHtml(label)}</span>`).join("")}</div>
+    ${renderHumanScreen()}
+  `;
+}
+
+function renderHumanScreen() {
+  const stage = state.sprint.currentStage;
+  if ([STAGES.HOME, STAGES.CREATE, STAGES.REVIEW_QUESTIONS].includes(stage)) return renderWaitingRoom();
+  if (stage === STAGES.INTERVIEWS) return renderHumanInterviewFlow();
+  if (stage === STAGES.IDEAS) return renderAfterSubmitWaiting();
+  if (stage === STAGES.VOTING) return renderHumanVoting();
+  if (stage === STAGES.PROTOTYPE) return renderHumanDone();
+  return renderWaitingRoom();
+}
+
+function renderWaitingRoom() {
+  return `
+    <section class="panel panel-pad grid mobile-card">
+      <h1>Waiting Room</h1>
+      <p class="lead">The Facilitator will start the next activity soon.</p>
+      <p class="muted">${escapeHtml(state.sprint.title)}</p>
+    </section>
+  `;
+}
+
+function renderHumanInterviewFlow() {
+  const questions = getInterviewQuestions();
+  const nextIndex = questions.findIndex((question) => !state.humanDraft.responses[question.id]);
+  if (nextIndex === -1) return state.humanDraft.submitted ? renderAfterSubmitWaiting() : renderSubmitInterview();
+  const question = questions[nextIndex];
+  return `
+    <form class="panel panel-pad grid mobile-card" id="humanQuestionForm" data-question-id="${escapeAttr(question.id)}">
+      <p class="eyebrow">Question ${nextIndex + 1}: ${escapeHtml(question.title)}</p>
+      <h1>${escapeHtml(question.question)}</h1>
+      <div class="row">
+        <button type="button" id="recordBtn">record</button>
+        <button type="button" class="secondary" id="stopRecordBtn" disabled>Stop</button>
+        <span id="recordingStatus" class="muted">Ready</span>
+      </div>
+      <div class="field">
+        <label for="humanResponse">Your response</label>
+        <textarea id="humanResponse" required placeholder="Share a story, example, or observation.">${escapeHtml(state.humanDraft.responses[question.id] || "")}</textarea>
+      </div>
+      <button type="submit">Next</button>
+    </form>
+  `;
+}
+
+function renderSubmitInterview() {
+  return `
+    <form class="panel panel-pad grid mobile-card" id="submitInterviewForm">
+      <h1>Submit Interview</h1>
+      <p class="lead">Your interview responses have been recorded. Add the speaker name, then submit them to the Facilitator.</p>
+      <div class="field">
+        <label for="speakerName">Name of Speaker</label>
+        <input id="speakerName" required value="${escapeAttr(state.humanDraft.speakerName)}" placeholder="Alex Morgan">
+      </div>
+      <button type="submit">Submit Interview</button>
+    </form>
+  `;
+}
+
+function renderAfterSubmitWaiting() {
+  return `
+    <section class="panel panel-pad grid mobile-card">
+      <h1>After Submit / Waiting</h1>
+      <p class="lead">Interview submitted. The Facilitator is reviewing ideas before voting opens.</p>
+    </section>
+  `;
+}
+
+function renderHumanVoting() {
+  const ideas = getAllIdeas();
+  const existingVote = state.sprint.votes.find((vote) => vote.humanId === state.humanSessionId);
+  return `
+    <form class="panel panel-pad grid mobile-card" id="humanVoteForm">
+      <h1>Idea Voting</h1>
+      <p class="lead">Prioritize your top 3 ideas in order.</p>
+      ${ideas.length ? `
         <div class="rank-grid">
           ${[1, 2, 3].map((rank) => `
             <div class="rank-slot">
               <span>${rank}</span>
               <select name="rank${rank}" required>
                 <option value="">Select idea</option>
-                ${ballot.map((idea) => `<option value="${idea.id}" ${existing?.ranked?.[rank - 1] === idea.id ? "selected" : ""}>${escapeHtml(idea.title)}</option>`).join("")}
+                ${ideas.map((idea) => `<option value="${escapeAttr(idea.id)}" ${existingVote?.ranked?.[rank - 1] === idea.id ? "selected" : ""}>${escapeHtml(idea.title)}</option>`).join("")}
               </select>
             </div>
           `).join("")}
         </div>
-        <button type="submit">${existing ? "Update top 3" : "Submit top 3"}</button>
-      </form>
-      <div class="grid three">${ballot.map(renderIdea).join("")}</div>
-    </div>
+        <div class="grid">${ideas.map((idea) => renderIdea(idea)).join("")}</div>
+      ` : `<p class="muted">The Facilitator has not opened an idea set yet.</p>`}
+      <button type="submit" ${ideas.length ? "" : "disabled"}>${existingVote ? "Update Vote" : "Submit Vote"}</button>
+    </form>
   `;
 }
 
-function renderParticipantResults() {
-  const winner = calculateResults()[0];
+function renderHumanDone() {
+  const selected = getSelectedIdea() || calculateResults()[0];
   return `
-    <div class="screen-result">
-      ${winner ? `
-        <section class="winner">
-          <p>Winning idea</p>
-          <h1>${escapeHtml(winner.title)}</h1>
-          <p>${escapeHtml(winner.description || "")}</p>
-        </section>
-      ` : `<section class="panel panel-pad"><h1>No result yet.</h1><p class="lead">The facilitator has not collected enough rankings to reveal a winner.</p></section>`}
-    </div>
-  `;
-}
-
-function renderPm() {
-  const counts = getCounts();
-  return `
-    ${renderPhaseStrip()}
-    <div class="grid three">
-      <div class="stat"><span class="muted">Designers</span><strong>${counts.participants}</strong></div>
-      <div class="stat"><span class="muted">Transcripts</span><strong>${counts.transcripts}</strong></div>
-      <div class="stat"><span class="muted">Rankings</span><strong>${counts.votes}</strong></div>
-    </div>
-    <div class="grid two" style="margin-top: 18px">
-      <section class="panel panel-pad grid">
-        <h2>Facilitator controls</h2>
-        <div class="field">
-          <label for="workshopName">Workshop name</label>
-          <input id="workshopName" value="${escapeAttr(state.workshopName)}">
-        </div>
-        <div class="field">
-          <label for="questions">Interview questions</label>
-          <textarea id="questions">${escapeHtml(state.questions)}</textarea>
-        </div>
-        <div class="row">
-          ${phases.map(([id, label]) => `<button type="button" class="${state.phase === id ? "" : "secondary"}" data-phase="${id}">${label}</button>`).join("")}
-        </div>
-        <div class="row">
-          <button type="button" id="generateIdeas">Generate ideas from transcripts</button>
-          <button type="button" class="secondary" id="exportData">Export JSON</button>
-          <button type="button" class="danger" id="resetWorkshop">Reset</button>
-        </div>
-      </section>
-      <section class="panel panel-pad grid">
-        <h2>Idea set</h2>
-        <form class="grid" id="manualIdeaForm">
-          <div class="field">
-            <label for="ideaTitle">Add or merge idea</label>
-            <input id="ideaTitle" required placeholder="Idea title">
-          </div>
-          <textarea id="ideaDescription" placeholder="Short description"></textarea>
-          <button type="submit">Add idea</button>
-        </form>
-        ${renderIdeas(true)}
-      </section>
-    </div>
-    <div class="grid two" style="margin-top: 18px">
-      <section class="panel panel-pad grid">
-        <h2>Submissions</h2>
-        ${state.participants.length ? state.participants.map(renderSubmission).join("") : `<p class="muted">No Designers yet.</p>`}
-      </section>
-      <section class="panel panel-pad grid">
-        <h2>Results</h2>
-        ${renderResults()}
-      </section>
-    </div>
-    <section class="panel panel-pad grid" style="margin-top: 18px">
-      <h2>Designer additions</h2>
-      ${renderParticipantAdditions()}
+    <section class="panel panel-pad grid mobile-card">
+      <h1>Prototype & Done</h1>
+      ${selected ? renderIdea(selected) : `<p class="lead">The Facilitator is preparing the prototype direction.</p>`}
     </section>
   `;
-}
-
-function renderPhaseStrip() {
-  return `<div class="status-strip">${phases.map(([id, label]) => `<div class="phase ${state.phase === id ? "active" : ""}">${label}</div>`).join("")}</div>`;
-}
-
-function renderIdeas(withControls = false) {
-  if (!state.ideas.length) {
-    return `<p class="muted">No generated ideas yet.</p>`;
-  }
-
-  return `<div class="grid">${state.ideas.map((idea) => renderIdea(idea, withControls)).join("")}</div>`;
 }
 
 function renderIdea(idea, withControls = false) {
   return `
     <article class="idea">
-      <div class="row" style="justify-content: space-between">
+      <div class="row split">
         <div class="idea-title">${escapeHtml(idea.title)}</div>
-        ${withControls ? `<button type="button" class="danger" data-delete-idea="${idea.id}">Remove</button>` : ""}
+        ${withControls ? `<button type="button" class="danger" data-delete-idea="${escapeAttr(idea.id)}">Remove</button>` : ""}
       </div>
       <p class="muted">${escapeHtml(idea.description || "")}</p>
-      ${idea.source ? `<small class="muted">Source: ${escapeHtml(idea.source)}</small>` : ""}
+      <small class="muted">${idea.confidence ? `Confidence: ${escapeHtml(idea.confidence)} | ` : ""}Votes: ${idea.voteCount || 0}</small>
     </article>
   `;
-}
-
-function renderOtherIdea(idea) {
-  return `<div class="other-row"><strong>${escapeHtml(idea.title)}</strong><p class="muted">${escapeHtml(idea.description || "")}</p></div>`;
-}
-
-function renderSubmission(participant) {
-  const otherCount = participant.otherIdeas?.length || 0;
-  const vote = state.votes.find((item) => item.participantId === participant.id);
-  return `
-    <article class="submission">
-      <div class="row" style="justify-content: space-between">
-        <strong>${escapeHtml(participant.name)}</strong>
-        <span class="muted">${participant.transcript ? "Transcript submitted" : "Waiting"}</span>
-      </div>
-      <p class="muted">${participant.transcript ? `${participant.transcript.slice(0, 180)}${participant.transcript.length > 180 ? "..." : ""}` : "No transcript yet."}</p>
-      <small class="muted">${otherCount} other ideas · ${vote ? "ranked" : "not ranked"}</small>
-    </article>
-  `;
-}
-
-function renderResults() {
-  const results = calculateResults();
-  if (!results.length) {
-    return `<p class="muted">Rankings will appear here after Designers submit their top three.</p>`;
-  }
-
-  return `<div class="grid">${results.map((idea) => `
-    <div class="ballot-row row" style="justify-content: space-between">
-      <div><strong>${escapeHtml(idea.title)}</strong><p class="muted">${escapeHtml(idea.description || "")}</p></div>
-      <span class="score">${idea.score}</span>
-    </div>
-  `).join("")}</div>`;
-}
-
-function renderParticipantAdditions() {
-  const additions = state.participants.flatMap((participant) =>
-    (participant.otherIdeas || []).map((idea) => ({ ...idea, participantName: participant.name }))
-  );
-
-  if (!additions.length) {
-    return `<p class="muted">Designer “Other” ideas will appear here before ranking.</p>`;
-  }
-
-  return `<div class="grid three">${additions.map((idea) => {
-    const alreadyPromoted = state.ideas.some((item) => item.promotedFrom === idea.id);
-    return `
-      <article class="idea">
-        <div class="idea-title">${escapeHtml(idea.title)}</div>
-        <p class="muted">${escapeHtml(idea.description || "")}</p>
-        <small class="muted">Added by ${escapeHtml(idea.participantName)}</small>
-        <button type="button" ${alreadyPromoted ? "disabled" : ""} data-promote-other="${idea.id}">
-          ${alreadyPromoted ? "Added to ballot" : "Add to ballot"}
-        </button>
-      </article>
-    `;
-  }).join("")}</div>`;
 }
 
 function bindCommon() {
-  document.querySelectorAll("[data-mode]").forEach((button) => {
-    button.addEventListener("click", () => setState({ mode: button.dataset.mode }));
+  document.querySelectorAll("[data-role]").forEach((button) => {
+    button.addEventListener("click", () => setState({ role: button.dataset.role }));
   });
 }
 
-function bindParticipant() {
-  document.querySelector("#joinForm")?.addEventListener("submit", (event) => {
+function bindFacilitator() {
+  document.querySelectorAll("[data-stage]").forEach((button) => {
+    button.addEventListener("click", () => setStage(button.dataset.stage));
+  });
+
+  document.querySelector("#createSprintForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const name = event.target.participantName.value.trim();
-    if (!name) return;
-    const participant = { id: uid("participant"), name, transcript: "", otherIdeas: [] };
-    state.participants.push(participant);
-    setState({ currentParticipantId: participant.id });
+    const form = event.target;
+    const title = form.elements.title.value.trim() || "Rapid Sprint";
+    const challenge = form.elements.challenge.value.trim();
+    const nextSprint = createSprint({
+      title,
+      challenge,
+      currentStage: STAGES.REVIEW_QUESTIONS,
+      interviewQuestions: generateInterviewQuestions(challenge),
+    });
+    setState((draft) => {
+      draft.sprint = nextSprint;
+      draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
+    });
   });
 
-  document.querySelector("#transcriptForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#regenerateQuestions")?.addEventListener("click", () => {
+    setState((draft) => {
+      draft.sprint.interviewQuestions = generateInterviewQuestions(draft.sprint.challenge);
+    });
+  });
+
+  document.querySelector("#reviewQuestionsForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const participant = getCurrentParticipant();
-    participant.name = document.querySelector("#participantNameEdit").value.trim() || participant.name;
-    participant.transcript = document.querySelector("#transcript").value.trim();
-    setState({});
+    setState((draft) => {
+      draft.sprint.interviewQuestions = getInterviewQuestions().map((question, index) => ({
+        ...question,
+        question: event.target.elements[`question${index}`].value.trim(),
+      }));
+      draft.sprint.currentStage = STAGES.INTERVIEWS;
+    });
   });
 
-  document.querySelector("#recordBtn")?.addEventListener("click", startRecording);
-  document.querySelector("#stopBtn")?.addEventListener("click", stopRecording);
-
-  document.querySelector("#otherIdeaForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const participant = getCurrentParticipant();
-    const title = event.target.otherTitle.value.trim();
-    const description = event.target.otherDescription.value.trim();
-    if (!title) return;
-    participant.otherIdeas ||= [];
-    participant.otherIdeas.push({ id: uid("other"), title, description, source: participant.name });
-    setState({});
+  document.querySelector("#copyInviteLink")?.addEventListener("click", async () => {
+    const link = document.querySelector("#inviteLink")?.value || makeInviteLink(state.sprint.id, state.sprint.currentStage);
+    await navigator.clipboard?.writeText(link);
+    const button = document.querySelector("#copyInviteLink");
+    if (button) button.textContent = "Copied";
   });
 
-  document.querySelector("#voteForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const participant = getCurrentParticipant();
-    const ranked = [event.target.rank1.value, event.target.rank2.value, event.target.rank3.value];
-    if (new Set(ranked).size !== ranked.length) {
-      alert("Please choose three different ideas.");
-      return;
-    }
-    state.votes = state.votes.filter((vote) => vote.participantId !== participant.id);
-    state.votes.push({ participantId: participant.id, ranked });
-    setState({});
-  });
-}
-
-function bindPm() {
-  document.querySelector("#workshopName")?.addEventListener("change", (event) => setState({ workshopName: event.target.value.trim() || "Rapid AI Design Sprint" }));
-  document.querySelector("#questions")?.addEventListener("change", (event) => setState({ questions: event.target.value }));
-
-  document.querySelectorAll("[data-phase]").forEach((button) => {
-    button.addEventListener("click", () => setState({ phase: button.dataset.phase }));
-  });
+  document.querySelector("#goIdeas")?.addEventListener("click", () => setStage(STAGES.IDEAS));
 
   document.querySelector("#generateIdeas")?.addEventListener("click", () => {
-    const generated = generateIdeasFromTranscripts();
-    state.ideas = generated.length ? generated : seedIdeas.map((idea) => ({ ...idea, id: uid("idea"), source: "starter" }));
-    setState({ phase: "others" });
+    setState((draft) => {
+      draft.sprint.generatedIdeas = generateIdeas(draft.sprint);
+    });
   });
 
-  document.querySelector("#manualIdeaForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#facilitatorIdeaForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const title = event.target.ideaTitle.value.trim();
+    const title = event.target.elements.facilitatorIdeaTitle.value.trim();
     if (!title) return;
-    state.ideas.push({
-      id: uid("idea"),
-      title,
-      description: event.target.ideaDescription.value.trim(),
-      source: "PM",
+    setState((draft) => {
+      draft.sprint.facilitatorAddedIdeas.push({
+        id: uid("idea"),
+        title,
+        description: "",
+        source: "facilitator",
+        voteCount: 0,
+      });
     });
-    setState({});
   });
 
   document.querySelectorAll("[data-delete-idea]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.ideas = state.ideas.filter((idea) => idea.id !== button.dataset.deleteIdea);
-      state.votes = state.votes.map((vote) => ({ ...vote, ranked: vote.ranked.filter((id) => id !== button.dataset.deleteIdea) }));
-      setState({});
+      const id = button.dataset.deleteIdea;
+      setState((draft) => {
+        draft.sprint.generatedIdeas = draft.sprint.generatedIdeas.filter((idea) => idea.id !== id);
+        draft.sprint.facilitatorAddedIdeas = draft.sprint.facilitatorAddedIdeas.filter((idea) => idea.id !== id);
+        draft.sprint.votes = draft.sprint.votes
+          .map((vote) => vote.ranked ? { ...vote, ranked: vote.ranked.filter((ideaId) => ideaId !== id) } : vote)
+          .filter((vote) => vote.ideaId !== id && (!vote.ranked || vote.ranked.length));
+      });
     });
   });
 
-  document.querySelectorAll("[data-promote-other]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const addition = state.participants
-        .flatMap((participant) => (participant.otherIdeas || []).map((idea) => ({ ...idea, participantName: participant.name })))
-        .find((idea) => idea.id === button.dataset.promoteOther);
-      if (!addition) return;
-      state.ideas.push({
-        id: uid("idea"),
-        title: addition.title,
-        description: addition.description,
-        source: `Other: ${addition.participantName}`,
-        promotedFrom: addition.id,
-      });
-      setState({});
+  document.querySelector("#nextVoting")?.addEventListener("click", () => setStage(STAGES.VOTING));
+
+  document.querySelector("#selectTopIdea")?.addEventListener("click", () => {
+    const topIdea = calculateResults()[0];
+    if (!topIdea) return;
+    setState((draft) => {
+      draft.sprint.selectedIdea = topIdea.id;
     });
   });
+
+  document.querySelector("#goPrototype")?.addEventListener("click", () => setStage(STAGES.PROTOTYPE));
 
   document.querySelector("#exportData")?.addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ sprint: state.sprint, promptLibrary }, null, 2)], { type: "application/json" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = "rapid-sprint-export.json";
     link.click();
     URL.revokeObjectURL(link.href);
   });
+}
 
-  document.querySelector("#resetWorkshop")?.addEventListener("click", () => {
-    if (!confirm("Reset this workshop? This clears local Designers, transcripts, ideas, and votes.")) return;
-    localStorage.removeItem(STORAGE_KEY);
-    Object.assign(state, loadState());
-    render();
+function bindHuman() {
+  document.querySelector("#humanQuestionForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const questionId = event.target.dataset.questionId;
+    const response = event.target.elements.humanResponse.value.trim();
+    if (!response) return;
+    setState((draft) => {
+      draft.humanDraft.responses[questionId] = response;
+    });
+  });
+
+  document.querySelector("#recordBtn")?.addEventListener("click", startRecording);
+  document.querySelector("#stopRecordBtn")?.addEventListener("click", stopRecording);
+
+  document.querySelector("#submitInterviewForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const speakerName = event.target.elements.speakerName.value.trim();
+    if (!speakerName) return;
+    setState((draft) => {
+      draft.humanDraft.speakerName = speakerName;
+      draft.humanDraft.submitted = true;
+      const questions = getInterviewQuestions();
+      const submittedAt = new Date().toISOString();
+      draft.sprint.interviewResponses = draft.sprint.interviewResponses.filter((response) => response.humanId !== draft.humanSessionId);
+      questions.forEach((question) => {
+        draft.sprint.interviewResponses.push({
+          id: uid("response"),
+          humanId: draft.humanSessionId,
+          questionId: question.id,
+          questionTitle: question.title,
+          questionText: question.question,
+          responseText: draft.humanDraft.responses[question.id] || "",
+          transcript: draft.humanDraft.responses[question.id] || "",
+          speakerName,
+          submittedAt,
+        });
+      });
+    });
+  });
+
+  document.querySelector("#humanVoteForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const ranked = [
+      event.target.elements.rank1.value,
+      event.target.elements.rank2.value,
+      event.target.elements.rank3.value,
+    ];
+    if (new Set(ranked).size !== ranked.length) {
+      alert("Please choose three different ideas.");
+      return;
+    }
+    setState((draft) => {
+      draft.sprint.votes = draft.sprint.votes.filter((vote) => vote.humanId !== draft.humanSessionId);
+      draft.sprint.votes.push({
+        id: uid("vote"),
+        humanId: draft.humanSessionId,
+        ranked,
+        submittedAt: new Date().toISOString(),
+      });
+    });
   });
 }
 
 function startRecording() {
-  if (!getSpeechRecognitionConstructor()) {
-    document.querySelector("#recordingStatus").textContent = "Live transcription is not supported in this browser.";
-    return;
-  }
-
-  transcriptBeforeRecording = document.querySelector("#transcript")?.value.trim() || "";
-  liveTranscript = "";
-  accumulatedSpeechTranscript = "";
-  currentSpeechTranscript = "";
-  isTranscribing = true;
-  if (!startSpeechRecognition()) {
-    isTranscribing = false;
-    return;
-  }
-  recordingStartedAt = Date.now();
-  timerId = window.setInterval(updateTimer, 500);
-  document.querySelector("#recordBtn").disabled = true;
-  document.querySelector("#stopBtn").disabled = false;
-  document.querySelector("#recordingStatus").className = "recording";
-  updateTimer();
-}
-
-function stopRecording() {
-  isTranscribing = false;
-  stopSpeechRecognition();
-  window.clearInterval(timerId);
-  document.querySelector("#recordBtn").disabled = false;
-  document.querySelector("#stopBtn").disabled = true;
-  document.querySelector("#recordingStatus").className = "muted";
-  document.querySelector("#recordingStatus").textContent = liveTranscript
-    ? "Transcript captured. Review it, then click submit."
-    : "No transcript was captured. Try again or paste notes before submitting.";
-}
-
-function updateTimer() {
-  const elapsed = Math.floor((Date.now() - recordingStartedAt) / 1000);
-  const minutes = String(Math.floor(elapsed / 60)).padStart(2, "0");
-  const seconds = String(elapsed % 60).padStart(2, "0");
-  document.querySelector("#recordingStatus").textContent = `Transcribing ${minutes}:${seconds}`;
-}
-
-function getSpeechRecognitionConstructor() {
-  return window.SpeechRecognition || window.webkitSpeechRecognition;
-}
-
-function startSpeechRecognition() {
-  const SpeechRecognition = getSpeechRecognitionConstructor();
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const textarea = document.querySelector("#humanResponse");
   const status = document.querySelector("#recordingStatus");
-  const transcript = document.querySelector("#transcript");
+  const recordButton = document.querySelector("#recordBtn");
+  const stopButton = document.querySelector("#stopRecordBtn");
+  const questionId = document.querySelector("#humanQuestionForm")?.dataset.questionId || "";
 
-  if (!SpeechRecognition || !transcript) {
-    if (status) {
-      status.textContent = "Live transcription is not supported in this browser.";
-    }
-    return false;
+  if (!SpeechRecognition || !textarea) {
+    if (status) status.textContent = "Live transcription is not available. You can still paste text.";
+    return;
   }
 
+  stopRecording();
+  currentRecordingQuestionId = questionId;
+  isTranscribing = true;
   speechRecognition = new SpeechRecognition();
   speechRecognition.continuous = true;
   speechRecognition.interimResults = true;
   speechRecognition.lang = navigator.language || "en-US";
 
-  speechRecognition.onresult = (event) => {
-    let finalText = "";
-    let interimText = "";
+  const startingText = textarea.value.trim();
+  let finalText = "";
 
+  speechRecognition.onresult = (event) => {
+    let interimText = "";
+    finalText = "";
     for (let index = 0; index < event.results.length; index += 1) {
       const text = event.results[index][0]?.transcript || "";
       if (event.results[index].isFinal) {
@@ -581,134 +876,212 @@ function startSpeechRecognition() {
         interimText += text;
       }
     }
-
-    currentSpeechTranscript = `${finalText}${interimText}`.trim();
-    liveTranscript = [accumulatedSpeechTranscript, currentSpeechTranscript].filter(Boolean).join(" ").trim();
-    transcript.value = [transcriptBeforeRecording, liveTranscript].filter(Boolean).join("\n\n");
+    textarea.value = [startingText, finalText.trim(), interimText.trim()].filter(Boolean).join(" ");
+    if (currentRecordingQuestionId) {
+      state.humanDraft.responses[currentRecordingQuestionId] = textarea.value.trim();
+      saveState();
+    }
   };
 
   speechRecognition.onerror = (event) => {
-    if (status) {
-      status.className = "recording";
-      status.textContent = `Live transcription stopped: ${event.error}. You can still paste or type notes.`;
-    }
-    if (["not-allowed", "service-not-allowed"].includes(event.error)) {
-      isTranscribing = false;
-      window.clearInterval(timerId);
-      document.querySelector("#recordBtn").disabled = false;
-      document.querySelector("#stopBtn").disabled = true;
-    }
+    if (status) status.textContent = `Recording stopped: ${event.error}. You can still paste text.`;
+    stopRecording();
   };
 
   speechRecognition.onend = () => {
     if (isTranscribing) {
-      accumulatedSpeechTranscript = [accumulatedSpeechTranscript, currentSpeechTranscript].filter(Boolean).join(" ").trim();
-      currentSpeechTranscript = "";
       try {
         speechRecognition.start();
       } catch (error) {
-        console.warn("Speech recognition restart skipped.", error);
+        if (status) status.textContent = "Recording paused. Click Record to continue.";
       }
     }
   };
 
   try {
     speechRecognition.start();
-    if (status) {
-      status.textContent = "Live transcription started...";
-    }
-    return true;
-  } catch (error) {
-    console.warn("Speech recognition could not start.", error);
+    if (recordButton) recordButton.disabled = true;
+    if (stopButton) stopButton.disabled = false;
     if (status) {
       status.className = "recording";
-      status.textContent = "Live transcription could not start. Check microphone permission or paste notes.";
+      status.textContent = "Recording...";
     }
-    return false;
+  } catch (error) {
+    isTranscribing = false;
+    if (status) status.textContent = "Recording could not start. Check microphone permission.";
   }
 }
 
-function stopSpeechRecognition() {
-  if (!speechRecognition) return;
-  speechRecognition.onend = null;
-  try {
-    speechRecognition.stop();
-  } catch (error) {
-    console.warn("Speech recognition stop skipped.", error);
+function stopRecording() {
+  isTranscribing = false;
+  const recordButton = document.querySelector("#recordBtn");
+  const stopButton = document.querySelector("#stopRecordBtn");
+  const status = document.querySelector("#recordingStatus");
+
+  if (speechRecognition) {
+    speechRecognition.onend = null;
+    try {
+      speechRecognition.stop();
+    } catch (error) {
+      console.warn("Speech recognition stop skipped.", error);
+    }
   }
   speechRecognition = null;
+  if (recordButton) recordButton.disabled = false;
+  if (stopButton) stopButton.disabled = true;
+  if (status && status.textContent === "Recording...") {
+    status.className = "muted";
+    status.textContent = "Recording stopped. Review or edit the text.";
+  }
 }
 
-function generateIdeasFromTranscripts() {
-  const transcripts = state.participants
-    .map((participant) => participant.transcript || "")
-    .join(" ")
-    .toLowerCase();
+function setStage(stage) {
+  setState((draft) => {
+    if (stage === STAGES.IDEAS && !draft.sprint.generatedIdeas.length) {
+      draft.sprint.generatedIdeas = generateIdeas(draft.sprint);
+    }
+    draft.sprint.currentStage = stage;
+  });
+}
 
-  const themes = [
-    ["onboarding", "start", "setup", "first", "confusing"],
-    ["speed", "slow", "wait", "time", "delay"],
-    ["visibility", "status", "progress", "unclear", "feedback"],
-    ["trust", "privacy", "confidence", "safe", "verify"],
-    ["collaboration", "handoff", "share", "team", "together"],
+function getInterviewQuestions() {
+  if (state.sprint.interviewQuestions.length) return state.sprint.interviewQuestions;
+  return generateInterviewQuestions(state.sprint.challenge || "Improve the current experience");
+}
+
+function generateInterviewQuestions(challenge) {
+  const focus = summarizeChallenge(challenge);
+  return [
+    {
+      id: "q1",
+      type: "bright_spots",
+      title: "Bright Spots",
+      question: `What is already working well with ${focus}?`,
+    },
+    {
+      id: "q2",
+      type: "pain_points",
+      title: "Pain Points",
+      question: `Where do people get stuck, frustrated, or slowed down with ${focus}?`,
+    },
+    {
+      id: "q3",
+      type: "future_improvements",
+      title: "Improvements",
+      question: `What would make ${focus} easier, faster, or more useful?`,
+    },
+  ];
+}
+
+function summarizeChallenge(challenge) {
+  let cleaned = String(challenge || "")
+    .toLowerCase()
+    .replace(/[?.!]+$/g, "")
+    .replace(/^(how might we|how can we|help us|we need to|we want to|improve|make|create|design|build)\s+/i, "")
+    .replace(/\b(users|people|customers|humans)\b/g, "people")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const contextMatch = cleaned.match(/\b(?:for|with|during|when)\s+(.+)$/);
+  if (contextMatch?.[1]) {
+    cleaned = contextMatch[1].trim();
+  }
+
+  cleaned = cleaned
+    .replace(/^(reduce friction|solve pain points|address pain points|make it easier|make easier|support|help|improve)\s+(for\s+)?/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return "this experience";
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  const summary = words.slice(0, 10).join(" ");
+  return summary || "this experience";
+}
+
+function generateIdeas(sprint) {
+  const responseText = sprint.interviewResponses.map((response) => response.responseText || response.transcript || "").join(" ").toLowerCase();
+  const evidenceCount = sprint.interviewResponses.length;
+  const keywordBoosts = [
+    ["wait", "waiting", "slow", "delay"],
+    ["confusing", "unclear", "lost", "hard"],
+    ["repeat", "again", "duplicate"],
+    ["share", "handoff", "team"],
+    ["track", "status", "progress"],
   ];
 
-  const ideas = themes
-    .map((keywords) => {
-      const score = keywords.reduce((total, word) => total + countWord(transcripts, word), 0);
-      return { keywords, score };
-    })
-    .filter((theme) => theme.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 6)
-    .map((theme) => ideaFromTheme(theme.keywords[0]));
-
-  return ideas.length ? ideas : [];
+  return ideaSeeds.map(([title, description], index) => {
+    const boost = keywordBoosts[index % keywordBoosts.length].some((word) => responseText.includes(word));
+    return {
+      id: `ai-${index + 1}`,
+      title,
+      description,
+      source: "ai",
+      confidence: boost && evidenceCount > 3 ? "High" : evidenceCount ? "Medium" : "Low",
+      voteCount: 0,
+    };
+  });
 }
 
-function ideaFromTheme(theme) {
-  const library = {
-    onboarding: ["Streamline onboarding", "Make the first task easier to start with fewer fields, clearer defaults, and guided next steps."],
-    speed: ["Reduce waiting time", "Identify slow moments and provide faster paths or visible wait-state feedback."],
-    visibility: ["Show progress and status", "Make the journey easier to follow with visible progress, confirmations, and next actions."],
-    trust: ["Build confidence into the flow", "Add transparent explanations, review moments, and privacy cues where people feel uncertain."],
-    collaboration: ["Support smoother handoffs", "Create clearer ways for teams to share context, decisions, and next steps."],
-  };
-  const [title, description] = library[theme];
-  return { id: uid("idea"), title, description, source: "transcripts" };
+function getAllIdeas() {
+  const counts = voteCounts();
+  return [...state.sprint.generatedIdeas, ...state.sprint.facilitatorAddedIdeas].map((idea) => ({
+    ...idea,
+    voteCount: counts.get(idea.id) || 0,
+  }));
 }
 
-function countWord(text, word) {
-  const matches = text.match(new RegExp(`\\b${word}\\b`, "g"));
-  return matches ? matches.length : 0;
+function voteCounts() {
+  const counts = new Map();
+  state.sprint.votes.forEach((vote) => {
+    if (vote.ranked?.length) {
+      vote.ranked.forEach((ideaId, index) => {
+        counts.set(ideaId, (counts.get(ideaId) || 0) + 3 - index);
+      });
+      return;
+    }
+    if (vote.ideaId) {
+      counts.set(vote.ideaId, (counts.get(vote.ideaId) || 0) + 1);
+    }
+  });
+  return counts;
 }
 
 function calculateResults() {
-  const allIdeas = [...state.ideas, ...state.participants.flatMap((participant) => participant.otherIdeas || [])];
-  const scores = new Map(allIdeas.map((idea) => [idea.id, { ...idea, score: 0 }]));
-  state.votes.forEach((vote) => {
-    vote.ranked.forEach((ideaId, index) => {
-      const item = scores.get(ideaId);
-      if (item) item.score += 3 - index;
-    });
-  });
-  return Array.from(scores.values()).filter((idea) => idea.score > 0).sort((a, b) => b.score - a.score);
+  return getAllIdeas().filter((idea) => idea.voteCount > 0).sort((a, b) => b.voteCount - a.voteCount);
 }
 
-function getBallotIdeas(participant) {
-  return [...state.ideas, ...(participant.otherIdeas || [])];
-}
-
-function getCurrentParticipant() {
-  return state.participants.find((participant) => participant.id === state.currentParticipantId);
+function getSelectedIdea() {
+  if (!state.sprint.selectedIdea) return null;
+  return getAllIdeas().find((idea) => idea.id === state.sprint.selectedIdea) || null;
 }
 
 function getCounts() {
+  const humanIds = new Set(state.sprint.interviewResponses.map((response) => response.humanId));
   return {
-    participants: state.participants.length,
-    transcripts: state.participants.filter((participant) => participant.transcript?.trim()).length,
-    votes: state.votes.length,
+    submitted: humanIds.size,
+    responses: state.sprint.interviewResponses.length,
+    votes: state.sprint.votes.length,
   };
+}
+
+function getHumanStepIndex() {
+  const stage = state.sprint.currentStage;
+  if ([STAGES.HOME, STAGES.CREATE, STAGES.REVIEW_QUESTIONS].includes(stage)) return 0;
+  if (stage === STAGES.INTERVIEWS) {
+    if (state.humanDraft.submitted) return 5;
+    const questions = getInterviewQuestions();
+    const nextIndex = questions.findIndex((question) => !state.humanDraft.responses[question.id]);
+    return nextIndex === -1 ? 4 : nextIndex + 1;
+  }
+  if (stage === STAGES.IDEAS) return 5;
+  if (stage === STAGES.VOTING) return 6;
+  if (stage === STAGES.PROTOTYPE) return 7;
+  return 0;
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
 function escapeHtml(value) {
@@ -728,5 +1101,15 @@ window.addEventListener("storage", () => {
   Object.assign(state, loadState());
   render();
 });
+
+const queryRole = new URLSearchParams(window.location.search).get("role");
+if (queryRole === ROLE.HUMAN && state.role !== ROLE.HUMAN) {
+  state.role = ROLE.HUMAN;
+}
+const queryStage = new URLSearchParams(window.location.search).get("stage");
+if (queryRole === ROLE.HUMAN && Object.values(STAGES).includes(queryStage)) {
+  state.sprint.currentStage = queryStage;
+}
+if (queryRole === ROLE.HUMAN) saveState();
 
 render();

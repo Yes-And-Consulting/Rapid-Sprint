@@ -1,19 +1,23 @@
 # RapidSprint
 
-A browser-based rapid AI design sprint workshop app with two views:
+A browser-based rapid AI design sprint workshop app with two roles:
 
-- **Designer**: capture a free browser-generated live transcript, submit it, add missing ideas, and rank top three ideas.
-- **Facilitator**: monitor submissions, generate/edit ideas, review Designer additions, open ranking, and reveal the result.
+- **Human**: answer one interview question per screen, submit the interview with a speaker name, vote on ideas, and see the prototype outcome.
+- **Facilitator**: create the sprint, review AI-generated interview questions, monitor submissions, generate/add ideas, run voting, and export the result.
+
+Facilitator manages the process. Humans contribute intelligence. AI accelerates in between.
 
 ## GitHub Pages Version
 
 This app now works as a static GitHub Pages site with no paid API, no server, and no secrets.
 
-The hosted version uses the browser's built-in speech recognition to write directly into the transcript box. It works best in Chrome and Edge on HTTPS, including GitHub Pages. Browsers that do not support speech recognition can still paste or type the transcript into the editable transcript box.
+The hosted version stores sprint state in the browser. Humans answer one question per screen, and the Facilitator reviews responses, generates ideas, runs voting, and exports JSON.
 
-## Optional Local Whisper Server
+A GitHub Pages workflow is included in `.github/workflows/pages.yml`. After pushing to `main` or `master`, GitHub deploys the static app and exposes a live Pages URL. Facilitator invite links and QR codes route Humans to the Human-only view.
 
-The Python server is still included if you want local open-source Whisper transcription on your own computer.
+## Optional Local Server
+
+The Python server is still included if you want to serve the static app locally.
 
 Install Python dependencies:
 
@@ -31,28 +35,4 @@ Open:
 
 ```text
 http://localhost:5173
-```
-
-The first transcription will take longer because Whisper downloads the free open-source model. By default the server uses:
-
-```text
-WHISPER_MODEL=turbo
-WHISPER_DEVICE=cpu
-```
-
-If your computer is slow, try a smaller model:
-
-```powershell
-$env:WHISPER_MODEL="small"
-python server.py
-```
-
-## Local Whisper Notes
-
-This app does not put API keys in the browser. Whisper runs on the local Python server, so transcription is free after the model is downloaded.
-
-Whisper also needs `ffmpeg` available on your computer. If transcription fails with an ffmpeg error, install it from:
-
-```text
-https://ffmpeg.org/download.html
 ```
