@@ -332,6 +332,14 @@ async function apiRequest(path, options = {}) {
   return response.json();
 }
 
+async function aiRequest(task, prompt) {
+  const result = await apiRequest("/api/ai/generate", {
+    method: "POST",
+    body: JSON.stringify({ task, prompt }),
+  });
+  return result.json;
+}
+
 function queueSprintSave() {
   window.clearTimeout(sprintSaveTimerId);
   sprintSaveTimerId = window.setTimeout(saveSprintToApi, 250);
@@ -591,6 +599,7 @@ function renderFacilitatorIdeas() {
         <p class="lead">Review the generated ideas, then add Facilitator ideas before voting.</p>
       </div>
       <div class="row">
+        <button type="button" class="secondary" id="generateIdeas">${state.sprint.generatedIdeas.length ? "Regenerate" : "Generate"} AI Ideas</button>
         <button type="button" id="nextVoting" ${ideas.length ? "" : "disabled"}>Next: Voting</button>
       </div>
       <section class="panel panel-pad grid">
@@ -788,27 +797,35 @@ function bindFacilitator() {
     button.addEventListener("click", () => setStage(button.dataset.stage));
   });
 
-  document.querySelector("#createSprintForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#createSprintForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target;
+    const submitButton = form.querySelector("button[type='submit']");
     const title = form.elements.title.value.trim() || "Rapid Sprint";
     const challenge = form.elements.challenge.value.trim();
+    setButtonLoading(submitButton, "Generating...");
+    const interviewQuestions = await generateInterviewQuestionsWithAi(challenge);
     const nextSprint = createSprint({
       title,
       challenge,
       currentStage: STAGES.REVIEW_QUESTIONS,
-      interviewQuestions: generateInterviewQuestions(challenge),
+      interviewQuestions,
     });
     setState((draft) => {
       draft.sprint = nextSprint;
       draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
     });
+    restoreButton(submitButton);
   });
 
-  document.querySelector("#regenerateQuestions")?.addEventListener("click", () => {
+  document.querySelector("#regenerateQuestions")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setButtonLoading(button, "Regenerating...");
+    const interviewQuestions = await generateInterviewQuestionsWithAi(state.sprint.challenge);
     setState((draft) => {
-      draft.sprint.interviewQuestions = generateInterviewQuestions(draft.sprint.challenge);
+      draft.sprint.interviewQuestions = interviewQuestions;
     });
+    restoreButton(button);
   });
 
   document.querySelector("#reviewQuestionsForm")?.addEventListener("submit", (event) => {
@@ -829,12 +846,27 @@ function bindFacilitator() {
     if (button) button.textContent = "Copied";
   });
 
-  document.querySelector("#goIdeas")?.addEventListener("click", () => setStage(STAGES.IDEAS));
-
-  document.querySelector("#generateIdeas")?.addEventListener("click", () => {
+  document.querySelector("#goIdeas")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setButtonLoading(button, "Analyzing...");
+    const generatedIdeas = state.sprint.generatedIdeas.length
+      ? state.sprint.generatedIdeas
+      : await generateIdeasWithAi(state.sprint);
     setState((draft) => {
-      draft.sprint.generatedIdeas = generateIdeas(draft.sprint);
+      draft.sprint.generatedIdeas = generatedIdeas;
+      draft.sprint.currentStage = STAGES.IDEAS;
     });
+    restoreButton(button);
+  });
+
+  document.querySelector("#generateIdeas")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setButtonLoading(button, "Generating...");
+    const generatedIdeas = await generateIdeasWithAi(state.sprint);
+    setState((draft) => {
+      draft.sprint.generatedIdeas = generatedIdeas;
+    });
+    restoreButton(button);
   });
 
   document.querySelector("#facilitatorIdeaForm")?.addEventListener("submit", (event) => {
@@ -1049,9 +1081,6 @@ function stopRecording() {
 
 function setStage(stage) {
   setState((draft) => {
-    if (stage === STAGES.IDEAS && !draft.sprint.generatedIdeas.length) {
-      draft.sprint.generatedIdeas = generateIdeas(draft.sprint);
-    }
     draft.sprint.currentStage = stage;
   });
 }
@@ -1083,6 +1112,32 @@ function generateInterviewQuestions(challenge) {
       question: `What would make ${focus} easier, faster, or more useful?`,
     },
   ];
+}
+
+async function generateInterviewQuestionsWithAi(challenge) {
+  try {
+    const prompt = renderPrompt(promptLibrary.generateInterviewQuestions.template, {
+      challenge,
+    });
+    const result = await aiRequest(promptLibrary.generateInterviewQuestions.id, prompt);
+    return normalizeInterviewQuestions(result.questions, challenge);
+  } catch (error) {
+    console.warn("Using local interview-question fallback.", error);
+    return generateInterviewQuestions(challenge);
+  }
+}
+
+function normalizeInterviewQuestions(questions, challenge) {
+  if (!Array.isArray(questions) || questions.length < 3) {
+    return generateInterviewQuestions(challenge);
+  }
+  const fallback = generateInterviewQuestions(challenge);
+  return questions.slice(0, 3).map((question, index) => ({
+    id: fallback[index].id,
+    type: question.type || fallback[index].type,
+    title: question.title || fallback[index].title,
+    question: String(question.question || fallback[index].question).trim(),
+  }));
 }
 
 function summarizeChallenge(challenge) {
@@ -1132,6 +1187,51 @@ function generateIdeas(sprint) {
       voteCount: 0,
     };
   });
+}
+
+async function generateIdeasWithAi(sprint) {
+  try {
+    const prompt = renderPrompt(promptLibrary.generateIdeas.template, {
+      challenge: sprint.challenge || "Improve the current experience",
+      interview_questions: JSON.stringify(getInterviewQuestions(), null, 2),
+      responses: JSON.stringify(sprint.interviewResponses, null, 2),
+    });
+    const result = await aiRequest(promptLibrary.generateIdeas.id, prompt);
+    return normalizeIdeas(result.ideas, sprint);
+  } catch (error) {
+    console.warn("Using local idea fallback.", error);
+    return generateIdeas(sprint);
+  }
+}
+
+function normalizeIdeas(ideas, sprint) {
+  if (!Array.isArray(ideas) || !ideas.length) return generateIdeas(sprint);
+  return ideas.slice(0, 10).map((idea, index) => ({
+    id: `ai-${index + 1}`,
+    title: String(idea.title || `Idea ${index + 1}`).trim(),
+    description: String(idea.description || "").trim(),
+    source: "ai",
+    confidence: ["High", "Medium", "Low"].includes(idea.confidence) ? idea.confidence : "Medium",
+    voteCount: 0,
+  }));
+}
+
+function renderPrompt(template, values) {
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => values[key] ?? "");
+}
+
+function setButtonLoading(button, label) {
+  if (!button) return;
+  button.dataset.originalText = button.textContent;
+  button.textContent = label;
+  button.disabled = true;
+}
+
+function restoreButton(button) {
+  if (!button) return;
+  button.textContent = button.dataset.originalText || button.textContent;
+  button.disabled = false;
+  delete button.dataset.originalText;
 }
 
 function getAllIdeas() {

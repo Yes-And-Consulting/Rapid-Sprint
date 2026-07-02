@@ -28,12 +28,30 @@ This is designed for workshop-sized groups such as up to 100 Humans submitting i
 
 ## Optional Local Server
 
-The Python server is still included if you want to serve the static app locally.
+The Python server is still included if you want to serve the static app locally or use OpenRouter-powered AI generation.
 
 Install Python dependencies:
 
 ```powershell
 python -m pip install -r requirements.txt
+```
+
+Set your OpenRouter API key:
+
+```powershell
+$env:OPENROUTER_API_KEY="your-openrouter-api-key"
+```
+
+By default the server routes AI requests through current OpenRouter free models:
+
+```text
+poolside/laguna-xs-2.1:free, cohere/north-mini-code:free, nvidia/nemotron-3-ultra-550b-a55b:free
+```
+
+To override that list, set a comma-separated model list:
+
+```powershell
+$env:OPENROUTER_MODELS="model-one:free,model-two:free"
 ```
 
 Start the local workshop server:
@@ -47,3 +65,5 @@ Open:
 ```text
 http://localhost:5173
 ```
+
+The browser calls the local Flask API, which calls OpenRouter server-side so your API key is not exposed. If the key is missing or OpenRouter is unavailable, RapidSprint falls back to its built-in local question and idea generators.

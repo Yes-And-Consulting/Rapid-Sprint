@@ -1,5 +1,7 @@
 import os
 import json
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -11,6 +13,12 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / ".data" / "sprints"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOCK = Lock()
+OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_OPENROUTER_MODELS = [
+    "poolside/laguna-xs-2.1:free",
+    "cohere/north-mini-code:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+]
 
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 
@@ -42,6 +50,72 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def openrouter_models():
+    raw_models = os.getenv("OPENROUTER_MODELS") or os.getenv("OPENROUTER_MODEL") or ""
+    models = [model.strip() for model in raw_models.split(",") if model.strip()]
+    return models or DEFAULT_OPENROUTER_MODELS
+
+
+def extract_json_object(content):
+    cleaned = (content or "").strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+
+    start = min([index for index in [cleaned.find("{"), cleaned.find("[")] if index >= 0], default=-1)
+    if start > 0:
+        cleaned = cleaned[start:]
+
+    parsed, _index = json.JSONDecoder().raw_decode(cleaned)
+    return parsed
+
+
+def openrouter_chat(prompt, task):
+    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+
+    payload = {
+        "models": openrouter_models(),
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You generate JSON for a rapid design sprint app. "
+                    "Return only valid JSON. Do not include markdown, commentary, or code fences."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 1800 if task == "generate_ideas" else 900,
+        "temperature": 0.7,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "http://localhost:5173"),
+        "X-Title": os.getenv("OPENROUTER_APP_NAME", "RapidSprint"),
+    }
+    request_obj = urllib.request.Request(OPENROUTER_CHAT_URL, data=body, headers=headers, method="POST")
+
+    with urllib.request.urlopen(request_obj, timeout=45) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not content:
+        raise RuntimeError("OpenRouter returned an empty response.")
+    return {
+        "model": result.get("model", ""),
+        "content": content,
+        "json": extract_json_object(content),
+    }
+
+
 def read_sprint(sprint_id):
     path = sprint_path(sprint_id)
     if not path.exists():
@@ -62,7 +136,28 @@ def write_sprint(sprint):
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "ai": bool(os.getenv("OPENROUTER_API_KEY", "").strip())})
+
+
+@app.post("/api/ai/generate")
+def post_ai_generate():
+    payload = request.get_json(silent=True) or {}
+    task = payload.get("task")
+    prompt = payload.get("prompt")
+    if task not in {"generate_interview_questions", "generate_ideas"} or not isinstance(prompt, str):
+        return jsonify({"error": "Expected task and prompt."}), 400
+
+    try:
+        result = openrouter_chat(prompt, task)
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 503
+    except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
+        return jsonify({"error": "OpenRouter request failed.", "details": details}), error.code
+    except Exception as error:
+        return jsonify({"error": "AI generation failed.", "details": str(error)}), 502
+
+    return jsonify(result)
 
 
 @app.get("/api/sprints/<sprint_id>")
