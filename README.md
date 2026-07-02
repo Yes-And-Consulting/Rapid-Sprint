@@ -28,30 +28,12 @@ This is designed for workshop-sized groups such as up to 100 Humans submitting i
 
 ## Optional Local Server
 
-The Python server is still included if you want to serve the static app locally or use OpenRouter-powered AI generation.
+The Python server is included if you want to serve the static app locally, share live sprint state, or use real AI generation.
 
 Install Python dependencies:
 
 ```powershell
 python -m pip install -r requirements.txt
-```
-
-Set your OpenRouter API key:
-
-```powershell
-$env:OPENROUTER_API_KEY="your-openrouter-api-key"
-```
-
-By default the server routes AI requests through current OpenRouter free models:
-
-```text
-nvidia/nemotron-3-ultra-550b-a55b:free, poolside/laguna-xs-2.1:free, meta-llama/llama-3.2-3b-instruct:free
-```
-
-To override that list, set a comma-separated model list:
-
-```powershell
-$env:OPENROUTER_MODELS="model-one:free,model-two:free"
 ```
 
 Start the local workshop server:
@@ -66,4 +48,30 @@ Open:
 http://localhost:5173
 ```
 
-The browser calls the local Flask API, which calls OpenRouter server-side so your API key is not exposed. If the key is missing or OpenRouter is unavailable, RapidSprint falls back to its built-in local question and idea generators.
+AI buttons call a real remote LLM service. When the Flask API is running, the browser calls the local API first and the server calls the LLM provider. With no OpenRouter key configured, the server uses Pollinations' free text generation endpoint. If the static app is running without Flask, the browser calls Pollinations directly.
+
+This means the challenge and interview text are sent to the remote AI provider when you click an `[AI]` button.
+
+## Optional OpenRouter
+
+If you set an OpenRouter key, the server tries OpenRouter first and falls back to Pollinations if OpenRouter is unavailable.
+
+Set your OpenRouter API key before starting the server:
+
+```powershell
+$env:OPENROUTER_API_KEY="your-openrouter-api-key"
+```
+
+By default the OpenRouter route uses current free models:
+
+```text
+nvidia/nemotron-3-ultra-550b-a55b:free, poolside/laguna-xs-2.1:free, meta-llama/llama-3.2-3b-instruct:free
+```
+
+To override that list, set a comma-separated model list:
+
+```powershell
+$env:OPENROUTER_MODELS="model-one:free,model-two:free"
+```
+
+If both remote AI providers are unavailable, RapidSprint falls back to its built-in local question and idea generators and shows an alert.

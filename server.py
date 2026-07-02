@@ -1,6 +1,7 @@
 import os
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,8 @@ DATA_DIR = ROOT / ".data" / "sprints"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOCK = Lock()
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+POLLINATIONS_CHAT_URL = "https://text.pollinations.ai/openai"
+POLLINATIONS_TEXT_URL = "https://text.pollinations.ai"
 DEFAULT_OPENROUTER_MODELS = [
     "nvidia/nemotron-3-ultra-550b-a55b:free",
     "poolside/laguna-xs-2.1:free",
@@ -54,6 +57,10 @@ def openrouter_models():
     raw_models = os.getenv("OPENROUTER_MODELS") or os.getenv("OPENROUTER_MODEL") or ""
     models = [model.strip() for model in raw_models.split(",") if model.strip()]
     return models or DEFAULT_OPENROUTER_MODELS
+
+
+def pollinations_model():
+    return os.getenv("POLLINATIONS_MODEL", "openai").strip() or "openai"
 
 
 def extract_json_object(content):
@@ -111,10 +118,93 @@ def openrouter_chat(prompt, task):
     if not content:
         raise RuntimeError("OpenRouter returned an empty response.")
     return {
+        "provider": "openrouter",
         "model": result.get("model", ""),
         "content": content,
         "json": extract_json_object(content),
     }
+
+
+def pollinations_chat(prompt, task):
+    payload = {
+        "model": pollinations_model(),
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a senior UX researcher and service designer generating JSON for a rapid design sprint app. "
+                    "Synthesize the user's specific context before writing. "
+                    "Return only valid JSON. Do not include markdown, commentary, or code fences."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 1800 if task == "generate_ideas" else 900,
+        "temperature": 0.35,
+        "private": True,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    request_obj = urllib.request.Request(POLLINATIONS_CHAT_URL, data=body, headers=headers, method="POST")
+
+    with urllib.request.urlopen(request_obj, timeout=60) as response:
+        raw_body = response.read().decode("utf-8")
+
+    try:
+        result = json.loads(raw_body)
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except json.JSONDecodeError:
+        content = raw_body
+
+    if not content:
+        raise RuntimeError("Pollinations returned an empty response.")
+    return {
+        "provider": "pollinations",
+        "model": pollinations_model(),
+        "content": content,
+        "json": extract_json_object(content),
+    }
+
+
+def pollinations_text(prompt, task):
+    text_prompt = (
+        "Return only valid JSON. Do not include markdown or commentary.\n\n"
+        f"{prompt}"
+    )
+    query = urllib.parse.urlencode({
+        "model": pollinations_model(),
+        "json": "true",
+        "private": "true",
+    })
+    url = f"{POLLINATIONS_TEXT_URL}/{urllib.parse.quote(text_prompt)}?{query}"
+
+    with urllib.request.urlopen(url, timeout=60) as response:
+        content = response.read().decode("utf-8")
+
+    if not content:
+        raise RuntimeError("Pollinations returned an empty response.")
+    return {
+        "provider": "pollinations",
+        "model": pollinations_model(),
+        "content": content,
+        "json": extract_json_object(content),
+    }
+
+
+def free_llm_chat(prompt, task):
+    if os.getenv("OPENROUTER_API_KEY", "").strip():
+        try:
+            return openrouter_chat(prompt, task)
+        except Exception:
+            pass
+
+    try:
+        return pollinations_chat(prompt, task)
+    except Exception:
+        return pollinations_text(prompt, task)
 
 
 def read_sprint(sprint_id):
@@ -137,7 +227,11 @@ def write_sprint(sprint):
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True, "ai": bool(os.getenv("OPENROUTER_API_KEY", "").strip())})
+    return jsonify({
+        "ok": True,
+        "ai": True,
+        "aiProvider": "openrouter" if os.getenv("OPENROUTER_API_KEY", "").strip() else "pollinations",
+    })
 
 
 @app.post("/api/ai/generate")
@@ -149,12 +243,12 @@ def post_ai_generate():
         return jsonify({"error": "Expected task and prompt."}), 400
 
     try:
-        result = openrouter_chat(prompt, task)
+        result = free_llm_chat(prompt, task)
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 503
     except urllib.error.HTTPError as error:
         details = error.read().decode("utf-8", errors="replace")
-        return jsonify({"error": "OpenRouter request failed.", "details": details}), error.code
+        return jsonify({"error": "Remote AI request failed.", "details": details}), error.code
     except Exception as error:
         return jsonify({"error": "AI generation failed.", "details": str(error)}), 502
 
