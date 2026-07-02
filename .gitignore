@@ -1,4 +1,7 @@
 .agents/
+.env
+.env.*
+!.env.example
 __pycache__/
 .venv/
 venv/

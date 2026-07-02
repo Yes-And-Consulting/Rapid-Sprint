@@ -332,7 +332,14 @@ async function apiRequest(path, options = {}) {
     ...options,
   });
   if (!response.ok) {
-    throw new Error(`API ${response.status}`);
+    let message = `API ${response.status}`;
+    try {
+      const details = await response.json();
+      message = details.details || details.error || message;
+    } catch (error) {
+      // Keep the status-only message when the response is not JSON.
+    }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -809,28 +816,38 @@ function bindFacilitator() {
     const title = form.elements.title.value.trim() || "Rapid Sprint";
     const challenge = form.elements.challenge.value.trim();
     setButtonLoading(submitButton, "[AI] Generating...");
-    const interviewQuestions = await generateInterviewQuestionsWithAi(challenge);
-    const nextSprint = createSprint({
-      title,
-      challenge,
-      currentStage: STAGES.REVIEW_QUESTIONS,
-      interviewQuestions,
-    });
-    setState((draft) => {
-      draft.sprint = nextSprint;
-      draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
-    });
-    restoreButton(submitButton);
+    try {
+      const interviewQuestions = await generateInterviewQuestionsWithAi(challenge);
+      const nextSprint = createSprint({
+        title,
+        challenge,
+        currentStage: STAGES.REVIEW_QUESTIONS,
+        interviewQuestions,
+      });
+      setState((draft) => {
+        draft.sprint = nextSprint;
+        draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
+      });
+    } catch (error) {
+      showAiError(error);
+    } finally {
+      restoreButton(submitButton);
+    }
   });
 
   document.querySelector("#regenerateQuestions")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     setButtonLoading(button, "[AI] Regenerating...");
-    const interviewQuestions = await generateInterviewQuestionsWithAi(state.sprint.challenge);
-    setState((draft) => {
-      draft.sprint.interviewQuestions = interviewQuestions;
-    });
-    restoreButton(button);
+    try {
+      const interviewQuestions = await generateInterviewQuestionsWithAi(state.sprint.challenge);
+      setState((draft) => {
+        draft.sprint.interviewQuestions = interviewQuestions;
+      });
+    } catch (error) {
+      showAiError(error);
+    } finally {
+      restoreButton(button);
+    }
   });
 
   document.querySelector("#reviewQuestionsForm")?.addEventListener("submit", (event) => {
@@ -854,24 +871,34 @@ function bindFacilitator() {
   document.querySelector("#goIdeas")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     setButtonLoading(button, "[AI] Analyzing...");
-    const generatedIdeas = state.sprint.generatedIdeas.length
-      ? state.sprint.generatedIdeas
-      : await generateIdeasWithAi(state.sprint);
-    setState((draft) => {
-      draft.sprint.generatedIdeas = generatedIdeas;
-      draft.sprint.currentStage = STAGES.IDEAS;
-    });
-    restoreButton(button);
+    try {
+      const generatedIdeas = state.sprint.generatedIdeas.length
+        ? state.sprint.generatedIdeas
+        : await generateIdeasWithAi(state.sprint);
+      setState((draft) => {
+        draft.sprint.generatedIdeas = generatedIdeas;
+        draft.sprint.currentStage = STAGES.IDEAS;
+      });
+    } catch (error) {
+      showAiError(error);
+    } finally {
+      restoreButton(button);
+    }
   });
 
   document.querySelector("#generateIdeas")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     setButtonLoading(button, "[AI] Generating...");
-    const generatedIdeas = await generateIdeasWithAi(state.sprint);
-    setState((draft) => {
-      draft.sprint.generatedIdeas = generatedIdeas;
-    });
-    restoreButton(button);
+    try {
+      const generatedIdeas = await generateIdeasWithAi(state.sprint);
+      setState((draft) => {
+        draft.sprint.generatedIdeas = generatedIdeas;
+      });
+    } catch (error) {
+      showAiError(error);
+    } finally {
+      restoreButton(button);
+    }
   });
 
   document.querySelector("#facilitatorIdeaForm")?.addEventListener("submit", (event) => {
@@ -1120,21 +1147,15 @@ function generateInterviewQuestions(challenge) {
 }
 
 async function generateInterviewQuestionsWithAi(challenge) {
-  try {
-    const prompt = renderPrompt(promptLibrary.generateInterviewQuestions.template, {
-      challenge,
-    });
-    const result = await aiRequest(promptLibrary.generateInterviewQuestions.id, prompt);
-    const questions = normalizeInterviewQuestions(result.questions, challenge);
-    if (!isSpecificQuestionSet(questions, challenge)) {
-      throw new Error("The remote AI provider returned generic interview questions.");
-    }
-    return questions;
-  } catch (error) {
-    console.warn("Using local interview-question fallback.", error);
-    notifyAiFallback("The remote AI provider did not return usable interview questions, so RapidSprint used its local fallback.");
-    return generateInterviewQuestions(challenge);
+  const prompt = renderPrompt(promptLibrary.generateInterviewQuestions.template, {
+    challenge,
+  });
+  const result = await aiRequest(promptLibrary.generateInterviewQuestions.id, prompt);
+  const questions = normalizeInterviewQuestions(result.questions, challenge);
+  if (!isSpecificQuestionSet(questions, challenge)) {
+    throw new Error("Gemini returned generic interview questions. Try adding more concrete detail to the challenge.");
   }
+  return questions;
 }
 
 function normalizeInterviewQuestions(questions, challenge) {
@@ -1146,8 +1167,16 @@ function normalizeInterviewQuestions(questions, challenge) {
     id: fallback[index].id,
     type: question.type || fallback[index].type,
     title: question.title || fallback[index].title,
-    question: String(question.question || fallback[index].question).trim(),
+    question: requireAiText(question.question, `question ${index + 1}`),
   }));
+}
+
+function requireAiText(value, label) {
+  const text = String(value || "").trim();
+  if (!text) {
+    throw new Error(`Gemini returned an empty ${label}.`);
+  }
+  return text;
 }
 
 function isSpecificQuestionSet(questions, challenge) {
@@ -1225,19 +1254,13 @@ function generateIdeas(sprint) {
 }
 
 async function generateIdeasWithAi(sprint) {
-  try {
-    const prompt = renderPrompt(promptLibrary.generateIdeas.template, {
-      challenge: sprint.challenge || "Improve the current experience",
-      interview_questions: JSON.stringify(getInterviewQuestions(), null, 2),
-      responses: JSON.stringify(sprint.interviewResponses, null, 2),
-    });
-    const result = await aiRequest(promptLibrary.generateIdeas.id, prompt);
-    return normalizeIdeas(result.ideas, sprint);
-  } catch (error) {
-    console.warn("Using local idea fallback.", error);
-    notifyAiFallback("The remote AI provider did not return usable ideas, so RapidSprint used its local fallback.");
-    return generateIdeas(sprint);
-  }
+  const prompt = renderPrompt(promptLibrary.generateIdeas.template, {
+    challenge: sprint.challenge || "Improve the current experience",
+    interview_questions: JSON.stringify(getInterviewQuestions(), null, 2),
+    responses: JSON.stringify(sprint.interviewResponses, null, 2),
+  });
+  const result = await aiRequest(promptLibrary.generateIdeas.id, prompt);
+  return normalizeIdeas(result.ideas, sprint);
 }
 
 function normalizeIdeas(ideas, sprint) {
@@ -1246,8 +1269,8 @@ function normalizeIdeas(ideas, sprint) {
   }
   return ideas.slice(0, 10).map((idea, index) => ({
     id: `ai-${index + 1}`,
-    title: String(idea.title || `Idea ${index + 1}`).trim(),
-    description: String(idea.description || "").trim(),
+    title: requireAiText(idea.title, `title for idea ${index + 1}`),
+    description: requireAiText(idea.description, `description for idea ${index + 1}`),
     source: "ai",
     confidence: ["High", "Medium", "Low"].includes(idea.confidence) ? idea.confidence : "Medium",
     voteCount: 0,
@@ -1258,8 +1281,15 @@ function renderPrompt(template, values) {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => values[key] ?? "");
 }
 
-function notifyAiFallback(message) {
-  window.alert(message);
+function showAiError(error) {
+  const message = error?.message || "AI generation failed.";
+  window.alert([
+    "Gemini did not generate output.",
+    "",
+    message,
+    "",
+    "Check that the Flask server is running and GEMINI_API_KEY is set in .env or your shell.",
+  ].join("\n"));
 }
 
 function setButtonLoading(button, label) {

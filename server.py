@@ -19,6 +19,25 @@ DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 
 
+def load_dotenv():
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return
+    with env_path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+load_dotenv()
+
+
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = os.getenv("CORS_ORIGIN", "*")
@@ -66,6 +85,14 @@ def extract_json_object(content):
 
     parsed, _index = json.JSONDecoder().raw_decode(cleaned)
     return parsed
+
+
+def gemini_status():
+    return {
+        "configured": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+        "provider": "gemini",
+        "model": gemini_model(),
+    }
 
 
 def extract_gemini_text(result):
@@ -145,11 +172,12 @@ def write_sprint(sprint):
 
 @app.get("/api/health")
 def health():
+    status = gemini_status()
     return jsonify({
         "ok": True,
-        "ai": bool(os.getenv("GEMINI_API_KEY", "").strip()),
-        "aiProvider": "gemini",
-        "aiModel": gemini_model(),
+        "ai": status["configured"],
+        "aiProvider": status["provider"],
+        "aiModel": status["model"],
     })
 
 
@@ -172,6 +200,11 @@ def post_ai_generate():
         return jsonify({"error": "AI generation failed.", "details": str(error)}), 502
 
     return jsonify(result)
+
+
+@app.get("/api/ai/status")
+def get_ai_status():
+    return jsonify(gemini_status())
 
 
 @app.get("/api/sprints/<sprint_id>")
