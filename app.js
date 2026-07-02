@@ -8,9 +8,6 @@ const ROLE = {
 const FALLBACK_PAGES_URL = "https://mcnei.github.io/RapidSprint/";
 const RAW_API_BASE = new URLSearchParams(window.location.search).get("api") || window.RAPIDSPRINT_API_BASE || "";
 const API_BASE = RAW_API_BASE.replace(/\/$/, "");
-const POLLINATIONS_CHAT_URL = "https://text.pollinations.ai/openai";
-const POLLINATIONS_TEXT_URL = "https://text.pollinations.ai";
-const POLLINATIONS_MODEL = window.RAPIDSPRINT_POLLINATIONS_MODEL || "openai";
 
 const STAGES = {
   HOME: "home",
@@ -341,107 +338,11 @@ async function apiRequest(path, options = {}) {
 }
 
 async function aiRequest(task, prompt) {
-  try {
-    const result = await apiRequest("/api/ai/generate", {
-      method: "POST",
-      body: JSON.stringify({ task, prompt }),
-    });
-    return result.json;
-  } catch (error) {
-    console.warn("Local AI proxy unavailable; using direct free LLM provider.", error);
-    return pollinationsRequest(task, prompt);
-  }
-}
-
-async function pollinationsRequest(task, prompt) {
-  try {
-    const response = await fetch(POLLINATIONS_CHAT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({
-        model: POLLINATIONS_MODEL,
-        private: true,
-        temperature: 0.35,
-        max_tokens: task === promptLibrary.generateIdeas.id ? 1800 : 900,
-        messages: [
-          {
-            role: "system",
-            content: [
-              "You are a senior UX researcher and service designer generating JSON for a rapid design sprint app.",
-              "Synthesize the user's specific context before writing.",
-              "Return only valid JSON. Do not include markdown, commentary, or code fences.",
-            ].join(" "),
-          },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-    if (!response.ok) throw new Error(`Pollinations ${response.status}`);
-    const raw = await response.text();
-    return parseAiResponse(raw);
-  } catch (error) {
-    if (prompt.length > 3000) throw error;
-    const textPrompt = `Return only valid JSON. Do not include markdown or commentary.\n\n${prompt}`;
-    const url = `${POLLINATIONS_TEXT_URL}/${encodeURIComponent(textPrompt)}?model=${encodeURIComponent(POLLINATIONS_MODEL)}&json=true&private=true`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Pollinations ${response.status}`);
-    return extractJsonFromText(await response.text());
-  }
-}
-
-function parseAiResponse(raw) {
-  try {
-    const parsed = JSON.parse(raw);
-    const content = parsed?.choices?.[0]?.message?.content || parsed?.choices?.[0]?.text || raw;
-    return typeof content === "string" ? extractJsonFromText(content) : content;
-  } catch (error) {
-    return extractJsonFromText(raw);
-  }
-}
-
-function extractJsonFromText(value) {
-  let cleaned = String(value || "").trim();
-  if (cleaned.startsWith("```")) {
-    const lines = cleaned.split("\n");
-    lines.shift();
-    if (lines.length && lines[lines.length - 1].trim() === "```") lines.pop();
-    cleaned = lines.join("\n").trim();
-  }
-  const firstObject = cleaned.indexOf("{");
-  const firstArray = cleaned.indexOf("[");
-  const starts = [firstObject, firstArray].filter((index) => index >= 0);
-  if (starts.length) cleaned = cleaned.slice(Math.min(...starts));
-  return JSON.parse(trimToJsonValue(cleaned));
-}
-
-function trimToJsonValue(value) {
-  const opening = value[0];
-  const closing = opening === "{" ? "}" : opening === "[" ? "]" : "";
-  if (!closing) return value;
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    if (escaping) {
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (char === opening) depth += 1;
-    if (char === closing) depth -= 1;
-    if (depth === 0) return value.slice(0, index + 1);
-  }
-  return value;
+  const result = await apiRequest("/api/ai/generate", {
+    method: "POST",
+    body: JSON.stringify({ task, prompt }),
+  });
+  return result.json;
 }
 
 function queueSprintSave() {

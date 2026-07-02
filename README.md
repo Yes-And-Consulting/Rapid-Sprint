@@ -48,30 +48,24 @@ Open:
 http://localhost:5173
 ```
 
-AI buttons call a real remote LLM service. When the Flask API is running, the browser calls the local API first and the server calls the LLM provider. With no OpenRouter key configured, the server uses Pollinations' free text generation endpoint. If the static app is running without Flask, the browser calls Pollinations directly.
+AI buttons call Gemini through the local Flask API. This keeps your Gemini API key on the server instead of exposing it in the browser. The static GitHub Pages version cannot call Gemini safely unless you deploy the Flask API and pass its URL with `?api=...`.
 
-This means the challenge and interview text are sent to the remote AI provider when you click an `[AI]` button.
-
-## Optional OpenRouter
-
-If you set an OpenRouter key, the server tries OpenRouter first and falls back to Pollinations if OpenRouter is unavailable.
-
-Set your OpenRouter API key before starting the server:
+Get a free Gemini API key from Google AI Studio, then set it before starting the server:
 
 ```powershell
-$env:OPENROUTER_API_KEY="your-openrouter-api-key"
+$env:GEMINI_API_KEY="your-gemini-api-key"
 ```
 
-By default the OpenRouter route uses current free models:
+By default RapidSprint uses:
 
 ```text
-nvidia/nemotron-3-ultra-550b-a55b:free, poolside/laguna-xs-2.1:free, meta-llama/llama-3.2-3b-instruct:free
+gemini-3.5-flash
 ```
 
-To override that list, set a comma-separated model list:
+To choose another Gemini model, set this before starting the server:
 
 ```powershell
-$env:OPENROUTER_MODELS="model-one:free,model-two:free"
+$env:GEMINI_MODEL="gemini-3.5-flash"
 ```
 
-If both remote AI providers are unavailable, RapidSprint falls back to its built-in local question and idea generators and shows an alert.
+Google documents a Gemini API Free tier with free input and output tokens for supported models, and paid use as a separate upgrade. Free-tier prompts may be used to improve Google products. If Gemini is unavailable or `GEMINI_API_KEY` is missing, RapidSprint falls back to its built-in local question and idea generators and shows an alert.

@@ -1,7 +1,6 @@
 import os
 import json
 import urllib.error
-import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,14 +13,8 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / ".data" / "sprints"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOCK = Lock()
-OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
-POLLINATIONS_CHAT_URL = "https://text.pollinations.ai/openai"
-POLLINATIONS_TEXT_URL = "https://text.pollinations.ai"
-DEFAULT_OPENROUTER_MODELS = [
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "poolside/laguna-xs-2.1:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
-]
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 
@@ -53,14 +46,8 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
-def openrouter_models():
-    raw_models = os.getenv("OPENROUTER_MODELS") or os.getenv("OPENROUTER_MODEL") or ""
-    models = [model.strip() for model in raw_models.split(",") if model.strip()]
-    return models or DEFAULT_OPENROUTER_MODELS
-
-
-def pollinations_model():
-    return os.getenv("POLLINATIONS_MODEL", "openai").strip() or "openai"
+def gemini_model():
+    return os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
 
 
 def extract_json_object(content):
@@ -81,130 +68,61 @@ def extract_json_object(content):
     return parsed
 
 
-def openrouter_chat(prompt, task):
-    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+def extract_gemini_text(result):
+    candidates = result.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("Gemini returned no candidates.")
+
+    parts = candidates[0].get("content", {}).get("parts") or []
+    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+    if not text:
+        raise RuntimeError("Gemini returned an empty response.")
+    return text
+
+
+def gemini_generate(prompt, task):
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+        raise RuntimeError("GEMINI_API_KEY is not configured.")
 
     payload = {
-        "models": openrouter_models(),
-        "messages": [
-            {
-                "role": "system",
-                "content": (
+        "systemInstruction": {
+            "parts": [{
+                "text": (
                     "You are a senior UX researcher and service designer generating JSON for a rapid design sprint app. "
                     "Synthesize the user's specific context before writing. "
                     "Return only valid JSON. Do not include markdown, commentary, or code fences."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": 1800 if task == "generate_ideas" else 900,
-        "temperature": 0.35,
-    }
-    body = json.dumps(payload).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "http://localhost:5173"),
-        "X-Title": os.getenv("OPENROUTER_APP_NAME", "RapidSprint"),
-    }
-    request_obj = urllib.request.Request(OPENROUTER_CHAT_URL, data=body, headers=headers, method="POST")
-
-    with urllib.request.urlopen(request_obj, timeout=45) as response:
-        result = json.loads(response.read().decode("utf-8"))
-
-    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not content:
-        raise RuntimeError("OpenRouter returned an empty response.")
-    return {
-        "provider": "openrouter",
-        "model": result.get("model", ""),
-        "content": content,
-        "json": extract_json_object(content),
-    }
-
-
-def pollinations_chat(prompt, task):
-    payload = {
-        "model": pollinations_model(),
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a senior UX researcher and service designer generating JSON for a rapid design sprint app. "
-                    "Synthesize the user's specific context before writing. "
-                    "Return only valid JSON. Do not include markdown, commentary, or code fences."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": 1800 if task == "generate_ideas" else 900,
-        "temperature": 0.35,
-        "private": True,
+                )
+            }]
+        },
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": prompt}],
+        }],
+        "generationConfig": {
+            "temperature": 0.35,
+            "maxOutputTokens": 1800 if task == "generate_ideas" else 900,
+            "responseMimeType": "application/json",
+        },
     }
     body = json.dumps(payload).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    request_obj = urllib.request.Request(POLLINATIONS_CHAT_URL, data=body, headers=headers, method="POST")
+    url = f"{GEMINI_API_URL.format(model=gemini_model())}?key={api_key}"
+    request_obj = urllib.request.Request(url, data=body, headers=headers, method="POST")
 
     with urllib.request.urlopen(request_obj, timeout=60) as response:
-        raw_body = response.read().decode("utf-8")
+        result = json.loads(response.read().decode("utf-8"))
 
-    try:
-        result = json.loads(raw_body)
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-    except json.JSONDecodeError:
-        content = raw_body
-
-    if not content:
-        raise RuntimeError("Pollinations returned an empty response.")
+    content = extract_gemini_text(result)
     return {
-        "provider": "pollinations",
-        "model": pollinations_model(),
+        "provider": "gemini",
+        "model": gemini_model(),
         "content": content,
         "json": extract_json_object(content),
     }
-
-
-def pollinations_text(prompt, task):
-    text_prompt = (
-        "Return only valid JSON. Do not include markdown or commentary.\n\n"
-        f"{prompt}"
-    )
-    query = urllib.parse.urlencode({
-        "model": pollinations_model(),
-        "json": "true",
-        "private": "true",
-    })
-    url = f"{POLLINATIONS_TEXT_URL}/{urllib.parse.quote(text_prompt)}?{query}"
-
-    with urllib.request.urlopen(url, timeout=60) as response:
-        content = response.read().decode("utf-8")
-
-    if not content:
-        raise RuntimeError("Pollinations returned an empty response.")
-    return {
-        "provider": "pollinations",
-        "model": pollinations_model(),
-        "content": content,
-        "json": extract_json_object(content),
-    }
-
-
-def free_llm_chat(prompt, task):
-    if os.getenv("OPENROUTER_API_KEY", "").strip():
-        try:
-            return openrouter_chat(prompt, task)
-        except Exception:
-            pass
-
-    try:
-        return pollinations_chat(prompt, task)
-    except Exception:
-        return pollinations_text(prompt, task)
 
 
 def read_sprint(sprint_id):
@@ -229,8 +147,9 @@ def write_sprint(sprint):
 def health():
     return jsonify({
         "ok": True,
-        "ai": True,
-        "aiProvider": "openrouter" if os.getenv("OPENROUTER_API_KEY", "").strip() else "pollinations",
+        "ai": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+        "aiProvider": "gemini",
+        "aiModel": gemini_model(),
     })
 
 
@@ -243,7 +162,7 @@ def post_ai_generate():
         return jsonify({"error": "Expected task and prompt."}), 400
 
     try:
-        result = free_llm_chat(prompt, task)
+        result = gemini_generate(prompt, task)
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 503
     except urllib.error.HTTPError as error:
