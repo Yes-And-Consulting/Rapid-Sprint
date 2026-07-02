@@ -529,7 +529,7 @@ function renderCreateSprint() {
         <label for="challenge">Description of Need/Pain Point/Challenge</label>
         <textarea id="challenge" name="challenge" required placeholder="Description or focus question entered by the facilitator.">${escapeHtml(state.sprint.challenge)}</textarea>
       </div>
-      <button type="submit">Generate Interview Questions</button>
+      <button type="submit">[AI] Generate Interview Questions</button>
     </form>
   `;
 }
@@ -547,7 +547,7 @@ function renderReviewQuestions() {
         </div>
       `).join("")}
       <div class="row">
-        <button type="button" class="secondary" id="regenerateQuestions">Regenerate Questions</button>
+        <button type="button" class="secondary" id="regenerateQuestions">[AI] Regenerate Questions</button>
         <button type="submit">Confirm & Continue</button>
       </div>
     </form>
@@ -561,7 +561,7 @@ function renderLiveDashboard() {
       <div>
         <h1>Interview Stage</h1>
         <p class="lead">Humans answer one interview question at a time. Their submitted interviews appear here.</p>
-        <button type="button" id="goIdeas">Analyze and Generate Ideas</button>
+        <button type="button" id="goIdeas">[AI] Analyze and Generate Ideas</button>
       </div>
       <div class="grid three">
         <div class="stat"><span class="muted">Humans submitted</span><strong>${counts.submitted}</strong></div>
@@ -599,7 +599,7 @@ function renderFacilitatorIdeas() {
         <p class="lead">Review the generated ideas, then add Facilitator ideas before voting.</p>
       </div>
       <div class="row">
-        <button type="button" class="secondary" id="generateIdeas">${state.sprint.generatedIdeas.length ? "Regenerate" : "Generate"} AI Ideas</button>
+        <button type="button" class="secondary" id="generateIdeas">[AI] ${state.sprint.generatedIdeas.length ? "Regenerate" : "Generate"} Ideas</button>
         <button type="button" id="nextVoting" ${ideas.length ? "" : "disabled"}>Next: Voting</button>
       </div>
       <section class="panel panel-pad grid">
@@ -803,7 +803,7 @@ function bindFacilitator() {
     const submitButton = form.querySelector("button[type='submit']");
     const title = form.elements.title.value.trim() || "Rapid Sprint";
     const challenge = form.elements.challenge.value.trim();
-    setButtonLoading(submitButton, "Generating...");
+    setButtonLoading(submitButton, "[AI] Generating...");
     const interviewQuestions = await generateInterviewQuestionsWithAi(challenge);
     const nextSprint = createSprint({
       title,
@@ -820,7 +820,7 @@ function bindFacilitator() {
 
   document.querySelector("#regenerateQuestions")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
-    setButtonLoading(button, "Regenerating...");
+    setButtonLoading(button, "[AI] Regenerating...");
     const interviewQuestions = await generateInterviewQuestionsWithAi(state.sprint.challenge);
     setState((draft) => {
       draft.sprint.interviewQuestions = interviewQuestions;
@@ -848,7 +848,7 @@ function bindFacilitator() {
 
   document.querySelector("#goIdeas")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
-    setButtonLoading(button, "Analyzing...");
+    setButtonLoading(button, "[AI] Analyzing...");
     const generatedIdeas = state.sprint.generatedIdeas.length
       ? state.sprint.generatedIdeas
       : await generateIdeasWithAi(state.sprint);
@@ -861,7 +861,7 @@ function bindFacilitator() {
 
   document.querySelector("#generateIdeas")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
-    setButtonLoading(button, "Generating...");
+    setButtonLoading(button, "[AI] Generating...");
     const generatedIdeas = await generateIdeasWithAi(state.sprint);
     setState((draft) => {
       draft.sprint.generatedIdeas = generatedIdeas;
