@@ -45,7 +45,7 @@ $env:OPENROUTER_API_KEY="your-openrouter-api-key"
 By default the server routes AI requests through current OpenRouter free models:
 
 ```text
-poolside/laguna-xs-2.1:free, cohere/north-mini-code:free, nvidia/nemotron-3-ultra-550b-a55b:free
+nvidia/nemotron-3-ultra-550b-a55b:free, poolside/laguna-xs-2.1:free, meta-llama/llama-3.2-3b-instruct:free
 ```
 
 To override that list, set a comma-separated model list:

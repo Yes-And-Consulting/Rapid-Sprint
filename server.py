@@ -15,9 +15,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOCK = Lock()
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODELS = [
-    "poolside/laguna-xs-2.1:free",
-    "cohere/north-mini-code:free",
     "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "poolside/laguna-xs-2.1:free",
+    "meta-llama/llama-3.2-3b-instruct:free",
 ]
 
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
@@ -85,14 +85,15 @@ def openrouter_chat(prompt, task):
             {
                 "role": "system",
                 "content": (
-                    "You generate JSON for a rapid design sprint app. "
+                    "You are a senior UX researcher and service designer generating JSON for a rapid design sprint app. "
+                    "Synthesize the user's specific context before writing. "
                     "Return only valid JSON. Do not include markdown, commentary, or code fences."
                 ),
             },
             {"role": "user", "content": prompt},
         ],
         "max_tokens": 1800 if task == "generate_ideas" else 900,
-        "temperature": 0.7,
+        "temperature": 0.35,
     }
     body = json.dumps(payload).encode("utf-8")
     headers = {

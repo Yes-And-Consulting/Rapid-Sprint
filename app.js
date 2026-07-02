@@ -47,26 +47,29 @@ const promptLibrary = {
     inputs: {
       challenge: "Description or focus question entered by the facilitator.",
     },
-    template: `You are an expert service designer, UX researcher, and facilitator.
+    template: `You are a senior UX researcher preparing a rapid empathy interview.
 
-Your job is to create three interview questions that help uncover real human experiences related to a design challenge.
+Your job is to synthesize the facilitator's challenge into three excellent interview questions. Treat the challenge as raw notes from a human, not as polished research wording.
 
-These questions will be used during a rapid empathy interview, so they must be conversational, easy to understand, and encourage storytelling.
+First, infer silently:
+- who the likely participant is
+- what activity, workflow, service, or moment is being studied
+- what outcome or friction the facilitator probably cares about
+- what concrete words from the challenge should appear in the questions
 
-Using the facilitator's challenge, generate exactly three interview questions.
+Then generate exactly three questions:
+1. Bright Spots: a question about a specific recent moment that worked better than expected.
+2. Pain Points: a question about a specific recent moment where the participant got stuck, slowed down, confused, or frustrated.
+3. Improvements: a question about what would have made that same kind of moment easier, clearer, faster, or more useful.
 
-The questions should explore:
-1. Bright Spots: what is already working well, successful, enjoyable, or effective.
-2. Pain Points: frustrations, blockers, inefficiencies, unmet needs, or moments of friction.
-3. Improvements: improvements, ideal outcomes, or changes that would make the experience better.
-
-Requirements:
-- Tailor all questions specifically to the challenge.
-- Encourage stories and examples.
-- Avoid yes/no questions.
-- Use plain language.
-- Keep each question under 25 words.
-- Do not suggest solutions.
+Quality bar:
+- Sound like a thoughtful researcher wrote them after reading the challenge carefully.
+- Use concrete nouns from the challenge; do not say "this experience" unless the challenge is truly empty.
+- Ask for a recent story, example, moment, or situation.
+- Make each question answerable by a real participant, not by the facilitator.
+- Avoid generic phrases like "what is working well" unless tied to the specific context.
+- Do not suggest features, solutions, surveys, rankings, metrics, or yes/no answers.
+- Keep each question under 28 words.
 - Return only valid JSON.
 
 Challenge:
@@ -123,7 +126,7 @@ Interview Questions:
 Interview Responses:
 {{responses}}
 
-Analyze all interview responses.
+Analyze all interview responses and synthesize the strongest patterns before writing ideas.
 
 Look for:
 - recurring needs
@@ -140,13 +143,15 @@ Look for:
 Generate exactly 10 ideas.
 
 Each idea should:
-- directly relate to the interview data
+- directly relate to the challenge and interview data
+- be grounded in a clear evidence pattern, not a generic workshop idea
 - solve a meaningful problem
 - be understandable in under 10 seconds
 - be distinct from every other idea
 - avoid duplicates
 - avoid vague business jargon
 - avoid implementation details
+- avoid simply restating the interview question
 - be suitable for voting
 - be broad enough for Facilitators to edit, merge, split, rename, remove, or add to before voting
 
@@ -1097,19 +1102,19 @@ function generateInterviewQuestions(challenge) {
       id: "q1",
       type: "bright_spots",
       title: "Bright Spots",
-      question: `What is already working well with ${focus}?`,
+      question: `Tell me about a recent time ${focus} worked better than expected.`,
     },
     {
       id: "q2",
       type: "pain_points",
       title: "Pain Points",
-      question: `Where do people get stuck, frustrated, or slowed down with ${focus}?`,
+      question: `Tell me about a recent time someone got stuck, slowed down, or frustrated with ${focus}.`,
     },
     {
       id: "q3",
       type: "future_improvements",
       title: "Improvements",
-      question: `What would make ${focus} easier, faster, or more useful?`,
+      question: `What would have made that moment with ${focus} easier, clearer, or more useful?`,
     },
   ];
 }
@@ -1120,16 +1125,21 @@ async function generateInterviewQuestionsWithAi(challenge) {
       challenge,
     });
     const result = await aiRequest(promptLibrary.generateInterviewQuestions.id, prompt);
-    return normalizeInterviewQuestions(result.questions, challenge);
+    const questions = normalizeInterviewQuestions(result.questions, challenge);
+    if (!isSpecificQuestionSet(questions, challenge)) {
+      throw new Error("OpenRouter returned generic interview questions.");
+    }
+    return questions;
   } catch (error) {
     console.warn("Using local interview-question fallback.", error);
+    notifyAiFallback("OpenRouter did not return usable interview questions, so RapidSprint used its local fallback.");
     return generateInterviewQuestions(challenge);
   }
 }
 
 function normalizeInterviewQuestions(questions, challenge) {
   if (!Array.isArray(questions) || questions.length < 3) {
-    return generateInterviewQuestions(challenge);
+    throw new Error("OpenRouter did not return three questions.");
   }
   const fallback = generateInterviewQuestions(challenge);
   return questions.slice(0, 3).map((question, index) => ({
@@ -1138,6 +1148,31 @@ function normalizeInterviewQuestions(questions, challenge) {
     title: question.title || fallback[index].title,
     question: String(question.question || fallback[index].question).trim(),
   }));
+}
+
+function isSpecificQuestionSet(questions, challenge) {
+  if (!Array.isArray(questions) || questions.length !== 3) return false;
+  const combined = questions.map((question) => question.question).join(" ").toLowerCase();
+  const challengeTerms = getChallengeTerms(challenge);
+  const hasChallengeLanguage = !challengeTerms.length || challengeTerms.some((term) => combined.includes(term));
+  const allAskForStories = questions.every((question) => /\b(recent|time|moment|example|story|situation|when)\b/i.test(question.question));
+  const avoidsEmptyPlaceholders = !/\b(this experience|your experience|the experience|things|stuff)\b/i.test(combined);
+  return hasChallengeLanguage && allAskForStories && avoidsEmptyPlaceholders;
+}
+
+function getChallengeTerms(challenge) {
+  const stopWords = new Set([
+    "about", "after", "again", "being", "better", "could", "create", "design", "does", "easier",
+    "from", "have", "help", "improve", "into", "make", "more", "need", "needs", "pain", "point",
+    "points", "should", "that", "their", "there", "these", "they", "this", "through", "user",
+    "users", "want", "what", "when", "where", "with", "would",
+  ]);
+  return String(challenge || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 3 && !stopWords.has(word))
+    .slice(0, 12);
 }
 
 function summarizeChallenge(challenge) {
@@ -1200,12 +1235,15 @@ async function generateIdeasWithAi(sprint) {
     return normalizeIdeas(result.ideas, sprint);
   } catch (error) {
     console.warn("Using local idea fallback.", error);
+    notifyAiFallback("OpenRouter did not return usable ideas, so RapidSprint used its local fallback.");
     return generateIdeas(sprint);
   }
 }
 
 function normalizeIdeas(ideas, sprint) {
-  if (!Array.isArray(ideas) || !ideas.length) return generateIdeas(sprint);
+  if (!Array.isArray(ideas) || ideas.length < 5) {
+    throw new Error("OpenRouter did not return enough ideas.");
+  }
   return ideas.slice(0, 10).map((idea, index) => ({
     id: `ai-${index + 1}`,
     title: String(idea.title || `Idea ${index + 1}`).trim(),
@@ -1218,6 +1256,10 @@ function normalizeIdeas(ideas, sprint) {
 
 function renderPrompt(template, values) {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => values[key] ?? "");
+}
+
+function notifyAiFallback(message) {
+  window.alert(message);
 }
 
 function setButtonLoading(button, label) {
