@@ -1,0 +1,1 @@
+window.RAPIDSPRINT_API_BASE = "";

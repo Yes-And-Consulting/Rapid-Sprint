@@ -26,6 +26,53 @@ The Flask API supports shared sprint sessions for large groups:
 
 This is designed for workshop-sized groups such as up to 100 Humans submitting interviews and votes into the same sprint.
 
+## Render Deployment
+
+Use Render for the Flask API that powers Gemini and live shared sessions.
+
+1. Push this repo to GitHub.
+2. In Render, create a new **Web Service** from this GitHub repo.
+3. Use these settings:
+
+```text
+Runtime: Python
+Build Command: pip install -r requirements.txt
+Start Command: gunicorn server:app
+Plan: Free
+```
+
+4. Add environment variables in Render:
+
+```text
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-3.5-flash
+CORS_ORIGIN=https://yes-and-consulting.github.io
+```
+
+5. Deploy, then open:
+
+```text
+https://your-render-service.onrender.com/api/ai/status
+```
+
+It should show `"configured": true`.
+
+6. Copy your Render service URL into `api-config.js`:
+
+```js
+window.RAPIDSPRINT_API_BASE = "https://your-render-service.onrender.com";
+```
+
+7. Commit and push. GitHub Pages will then call the Render API automatically.
+
+You can also test before editing `api-config.js` by opening:
+
+```text
+https://yes-and-consulting.github.io/RapidSprint/?api=https://your-render-service.onrender.com
+```
+
+Render free services may sleep after inactivity. The first request after sleeping can take a little longer.
+
 ## Optional Local Server
 
 The Python server is required for Gemini AI generation and live shared sprint state. AI buttons call Gemini through the local Flask API, which keeps your Gemini API key on the server instead of exposing it in the browser. The static GitHub Pages version cannot call Gemini safely unless you deploy the Flask API and pass its URL with `?api=...`.
