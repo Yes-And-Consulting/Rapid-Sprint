@@ -9,6 +9,7 @@ const ROLE = {
 const FALLBACK_PAGES_URL = "https://yes-and-consulting.github.io/Rapid-Sprint/";
 const RAW_API_BASE = new URLSearchParams(window.location.search).get("api") || window.RAPIDSPRINT_API_BASE || "";
 const API_BASE = RAW_API_BASE.replace(/\/$/, "");
+const AI_REQUEST_TIMEOUT_MS = 20000;
 
 const STAGES = {
   HOME: "home",
@@ -375,11 +376,23 @@ async function apiRequest(path, options = {}) {
 }
 
 async function aiRequest(task, prompt) {
-  const result = await apiRequest("/api/ai/generate", {
-    method: "POST",
-    body: JSON.stringify({ task, prompt }),
-  });
-  return result.json;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+  try {
+    const result = await apiRequest("/api/ai/generate", {
+      method: "POST",
+      body: JSON.stringify({ task, prompt }),
+      signal: controller.signal,
+    });
+    return result.json;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("The hosted AI request timed out.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 function queueSprintSave() {
@@ -628,7 +641,8 @@ function renderCreateSprint() {
         <label for="challenge">Description of Need/Pain Point/Challenge</label>
         <textarea id="challenge" name="challenge" required placeholder="Description or focus question entered by the facilitator.">${escapeHtml(state.sprint.challenge)}</textarea>
       </div>
-      <button type="submit">[AI] Generate Interview Questions</button>
+      <p class="status-message" id="createSprintStatus" role="status" aria-live="polite"></p>
+      <button type="button" id="createSprintButton">[AI] Generate Interview Questions</button>
     </form>
   `;
 }
@@ -903,38 +917,13 @@ function bindFacilitator() {
 
   document.querySelector("#createSprintForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const form = event.target;
-    const submitButton = form.querySelector("button[type='submit']");
-    const title = form.elements.title.value.trim() || "Rapid Sprint";
-    const challenge = form.elements.challenge.value.trim();
-    setButtonLoading(submitButton, "[AI] Generating...");
-    try {
-      const interviewQuestions = await generateInterviewQuestionsWithAi(challenge);
-      const nextSprint = createSprint({
-        title,
-        challenge,
-        currentStage: STAGES.REVIEW_QUESTIONS,
-        interviewQuestions,
-      });
-      setState((draft) => {
-        draft.sprint = nextSprint;
-        draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
-      });
-    } catch (error) {
-      console.warn("Remote AI failed while creating questions; using generated draft questions.", error);
-      const nextSprint = createSprint({
-        title,
-        challenge,
-        currentStage: STAGES.REVIEW_QUESTIONS,
-        interviewQuestions: generateInterviewQuestions(challenge),
-      });
-      setState((draft) => {
-        draft.sprint = nextSprint;
-        draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
-      });
-    } finally {
-      restoreButton(submitButton);
-    }
+    await handleCreateSprint(event.target, document.querySelector("#createSprintButton"));
+  });
+
+  document.querySelector("#createSprintButton")?.addEventListener("click", async (event) => {
+    const form = document.querySelector("#createSprintForm");
+    if (!form?.reportValidity()) return;
+    await handleCreateSprint(form, event.currentTarget);
   });
 
   document.querySelector("#regenerateQuestions")?.addEventListener("click", async (event) => {
@@ -1060,6 +1049,37 @@ function bindFacilitator() {
     link.download = "rapid-sprint-export.json";
     link.click();
     URL.revokeObjectURL(link.href);
+  });
+}
+
+async function handleCreateSprint(form, submitButton) {
+  const title = form.elements.title.value.trim() || "Rapid Sprint";
+  const challenge = form.elements.challenge.value.trim();
+  setInlineStatus("createSprintStatus", "Contacting hosted AI on Render...");
+  setButtonLoading(submitButton, "[AI] Generating...");
+  try {
+    const interviewQuestions = await generateInterviewQuestionsWithAi(challenge);
+    setInlineStatus("createSprintStatus", "Questions generated. Opening review...");
+    createSprintWithQuestions(title, challenge, interviewQuestions);
+  } catch (error) {
+    console.warn("Remote AI failed while creating questions; using generated draft questions.", error);
+    setInlineStatus("createSprintStatus", "Hosted AI did not respond cleanly. Opening editable draft questions...");
+    createSprintWithQuestions(title, challenge, generateInterviewQuestions(challenge));
+  } finally {
+    restoreButton(submitButton);
+  }
+}
+
+function createSprintWithQuestions(title, challenge, interviewQuestions) {
+  const nextSprint = createSprint({
+    title,
+    challenge,
+    currentStage: STAGES.REVIEW_QUESTIONS,
+    interviewQuestions,
+  });
+  setState((draft) => {
+    draft.sprint = nextSprint;
+    draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
   });
 }
 
@@ -1402,6 +1422,12 @@ function showAiError(error) {
     "",
     "Try again. If this keeps happening, check that the API service is running and GEMINI_API_KEY is configured.",
   ].join("\n"));
+}
+
+function setInlineStatus(id, message) {
+  const element = document.getElementById(id);
+  if (!element) return;
+  element.textContent = message;
 }
 
 function setButtonLoading(button, label) {

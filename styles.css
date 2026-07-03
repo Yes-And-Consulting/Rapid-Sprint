@@ -276,6 +276,13 @@ h3 {
   color: var(--muted);
 }
 
+.status-message {
+  min-height: 22px;
+  margin: 0;
+  color: var(--accent-dark);
+  font-weight: 760;
+}
+
 .status-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
