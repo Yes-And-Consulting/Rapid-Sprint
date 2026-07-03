@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -69,7 +70,7 @@ def gemini_model():
     return os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
 
 
-def extract_json_object(content):
+def extract_balanced_json(content):
     cleaned = (content or "").strip()
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
@@ -80,11 +81,55 @@ def extract_json_object(content):
         cleaned = "\n".join(lines).strip()
 
     start = min([index for index in [cleaned.find("{"), cleaned.find("[")] if index >= 0], default=-1)
-    if start > 0:
-        cleaned = cleaned[start:]
+    if start < 0:
+        return cleaned
 
-    parsed, _index = json.JSONDecoder().raw_decode(cleaned)
-    return parsed
+    opener = cleaned[start]
+    closer = "}" if opener == "{" else "]"
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for index in range(start, len(cleaned)):
+        char = cleaned[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return cleaned[start:index + 1]
+
+    return cleaned[start:]
+
+
+def repair_json_like_text(cleaned):
+    repaired = cleaned.strip()
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    repaired = re.sub(r"([{,]\s*)([A-Za-z_][A-Za-z0-9_-]*)\s*:", r'\1"\2":', repaired)
+    repaired = re.sub(r":\s*'([^'\\]*(?:\\.[^'\\]*)*)'", lambda match: ': ' + json.dumps(match.group(1)), repaired)
+    return repaired
+
+
+def extract_json_object(content):
+    cleaned = extract_balanced_json(content)
+    try:
+        parsed, _index = json.JSONDecoder().raw_decode(cleaned)
+        return parsed
+    except json.JSONDecodeError:
+        repaired = repair_json_like_text(cleaned)
+        parsed, _index = json.JSONDecoder().raw_decode(repaired)
+        return parsed
 
 
 def gemini_status():

@@ -6,7 +6,7 @@ const ROLE = {
   HUMAN: "human",
 };
 
-const FALLBACK_PAGES_URL = "https://mcnei.github.io/RapidSprint/";
+const FALLBACK_PAGES_URL = "https://yes-and-consulting.github.io/Rapid-Sprint/";
 const RAW_API_BASE = new URLSearchParams(window.location.search).get("api") || window.RAPIDSPRINT_API_BASE || "";
 const API_BASE = RAW_API_BASE.replace(/\/$/, "");
 
@@ -1381,7 +1381,7 @@ function showAiError(error) {
     "",
     message,
     "",
-    "Check that the Flask server is running and GEMINI_API_KEY is set in .env or your shell.",
+    "Try again. If this keeps happening, check that the API service is running and GEMINI_API_KEY is configured.",
   ].join("\n"));
 }
 

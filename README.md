@@ -68,7 +68,7 @@ window.RAPIDSPRINT_API_BASE = "https://your-render-service.onrender.com";
 You can also test before editing `api-config.js` by opening:
 
 ```text
-https://yes-and-consulting.github.io/RapidSprint/?api=https://your-render-service.onrender.com
+https://yes-and-consulting.github.io/Rapid-Sprint/?api=https://your-render-service.onrender.com
 ```
 
 Render free services may sleep after inactivity. The first request after sleeping can take a little longer.
