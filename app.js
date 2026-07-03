@@ -338,8 +338,7 @@ function makeInviteLink(sprintId, stage = STAGES.INTERVIEWS) {
 }
 
 function getLiveBaseUrl() {
-  const localHosts = new Set(["localhost", "127.0.0.1", "0.0.0.0", ""]);
-  if (window.location.protocol.startsWith("http") && !localHosts.has(window.location.hostname)) {
+  if (window.location.protocol.startsWith("http")) {
     return `${window.location.origin}${window.location.pathname}`;
   }
   return FALLBACK_PAGES_URL;
@@ -922,7 +921,17 @@ function bindFacilitator() {
         draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
       });
     } catch (error) {
-      showAiError(error);
+      console.warn("Remote AI failed while creating questions; using generated draft questions.", error);
+      const nextSprint = createSprint({
+        title,
+        challenge,
+        currentStage: STAGES.REVIEW_QUESTIONS,
+        interviewQuestions: generateInterviewQuestions(challenge),
+      });
+      setState((draft) => {
+        draft.sprint = nextSprint;
+        draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
+      });
     } finally {
       restoreButton(submitButton);
     }
@@ -937,7 +946,10 @@ function bindFacilitator() {
         draft.sprint.interviewQuestions = interviewQuestions;
       });
     } catch (error) {
-      showAiError(error);
+      console.warn("Remote AI failed while regenerating questions; using generated draft questions.", error);
+      setState((draft) => {
+        draft.sprint.interviewQuestions = generateInterviewQuestions(state.sprint.challenge);
+      });
     } finally {
       restoreButton(button);
     }
@@ -973,7 +985,11 @@ function bindFacilitator() {
         draft.sprint.currentStage = STAGES.IDEAS;
       });
     } catch (error) {
-      showAiError(error);
+      console.warn("Remote AI failed while generating ideas; using generated draft ideas.", error);
+      setState((draft) => {
+        draft.sprint.generatedIdeas = generateIdeas(state.sprint);
+        draft.sprint.currentStage = STAGES.IDEAS;
+      });
     } finally {
       restoreButton(button);
     }
@@ -988,7 +1004,10 @@ function bindFacilitator() {
         draft.sprint.generatedIdeas = generatedIdeas;
       });
     } catch (error) {
-      showAiError(error);
+      console.warn("Remote AI failed while regenerating ideas; using generated draft ideas.", error);
+      setState((draft) => {
+        draft.sprint.generatedIdeas = generateIdeas(state.sprint);
+      });
     } finally {
       restoreButton(button);
     }

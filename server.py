@@ -20,25 +20,6 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 
 
-def load_dotenv():
-    env_path = ROOT / ".env"
-    if not env_path.exists():
-        return
-    with env_path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
-
-
-load_dotenv()
-
-
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = os.getenv("CORS_ORIGIN", "*")
@@ -132,6 +113,51 @@ def extract_json_object(content):
         return parsed
 
 
+def gemini_response_schema(task):
+    if task == "generate_interview_questions":
+        return {
+            "type": "OBJECT",
+            "properties": {
+                "questions": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "type": {"type": "STRING"},
+                            "title": {"type": "STRING"},
+                            "question": {"type": "STRING"},
+                        },
+                        "required": ["type", "title", "question"],
+                    },
+                },
+            },
+            "required": ["questions"],
+        }
+
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "ideas": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "id": {"type": "INTEGER"},
+                        "title": {"type": "STRING"},
+                        "description": {"type": "STRING"},
+                        "confidence": {
+                            "type": "STRING",
+                            "enum": ["High", "Medium", "Low"],
+                        },
+                    },
+                    "required": ["id", "title", "description", "confidence"],
+                },
+            },
+        },
+        "required": ["ideas"],
+    }
+
+
 def gemini_status():
     return {
         "configured": bool(os.getenv("GEMINI_API_KEY", "").strip()),
@@ -172,9 +198,10 @@ def gemini_generate(prompt, task):
             "parts": [{"text": prompt}],
         }],
         "generationConfig": {
-            "temperature": 0.35,
-            "maxOutputTokens": 1800 if task == "generate_ideas" else 900,
+            "temperature": 0.2,
+            "maxOutputTokens": 4096 if task == "generate_ideas" else 2048,
             "responseMimeType": "application/json",
+            "responseSchema": gemini_response_schema(task),
         },
     }
     body = json.dumps(payload).encode("utf-8")
@@ -189,11 +216,16 @@ def gemini_generate(prompt, task):
         result = json.loads(response.read().decode("utf-8"))
 
     content = extract_gemini_text(result)
+    try:
+        parsed_json = extract_json_object(content)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("Gemini returned malformed JSON. The hosted app can retry or use a generated draft.") from error
+
     return {
         "provider": "gemini",
         "model": gemini_model(),
         "content": content,
-        "json": extract_json_object(content),
+        "json": parsed_json,
     }
 
 
@@ -327,7 +359,3 @@ def post_vote(sprint_id):
 @app.get("/<path:path>")
 def static_files(path):
     return send_from_directory(ROOT, path)
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5173")), debug=True)

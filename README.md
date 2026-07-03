@@ -7,15 +7,21 @@ A browser-based rapid AI design sprint workshop app with two roles:
 
 Facilitator manages the process. Humans contribute intelligence. AI accelerates in between.
 
-## GitHub Pages Version
+## Hosted App
 
-This app can be previewed as a static GitHub Pages site with no paid API and no secrets.
+RapidSprint is designed to run from GitHub Pages with a Render-hosted API.
 
-The hosted version stores sprint state in the browser. Humans answer one question per screen, and the Facilitator reviews responses, generates ideas, runs voting, and exports JSON.
+Public app URL:
+
+```text
+https://yes-and-consulting.github.io/Rapid-Sprint/
+```
+
+The GitHub Pages site is the participant and facilitator entry point. Humans answer one question per screen, and the Facilitator reviews responses, generates ideas, runs voting, and exports JSON.
 
 A GitHub Pages workflow is included in `.github/workflows/pages.yml`. After pushing to `main` or `master`, GitHub deploys the static app and exposes a live Pages URL. Facilitator invite links and QR codes route Humans to the Human-only view.
 
-For live multi-device sessions, serve the app with the included Flask API or deploy the same API to a host such as Render, Railway, Fly.io, or Azure. GitHub Pages is static hosting, so it cannot receive interview or voting submissions by itself.
+Render runs the Flask API for Gemini and shared live sprint state. GitHub Pages is static hosting, so it does not receive interview or voting submissions by itself.
 
 The Flask API supports shared sprint sessions for large groups:
 
@@ -94,34 +100,7 @@ solid-compass-40
 
 To rotate or add passwords, edit `FACILITATOR_PASSWORDS` in `app.js`, commit, and push. This is a tester gate, not strong security, because GitHub Pages JavaScript is public.
 
-## Optional Local Server
-
-The Python server is required for Gemini AI generation and live shared sprint state. AI buttons call Gemini through the local Flask API, which keeps your Gemini API key on the server instead of exposing it in the browser. The static GitHub Pages version cannot call Gemini safely unless you deploy the Flask API and pass its URL with `?api=...`.
-
-Get a free Gemini API key from Google AI Studio, then create a local `.env` file:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Edit `.env`:
-
-```text
-GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-2.5-flash
-```
-
-Then start the app:
-
-```powershell
-.\start.ps1
-```
-
-Open:
-
-```text
-http://localhost:5173
-```
+## Hosted Operations
 
 By default RapidSprint uses:
 
@@ -129,10 +108,10 @@ By default RapidSprint uses:
 gemini-2.5-flash
 ```
 
-After starting the server, check Gemini configuration:
+Check Gemini configuration on the Render service:
 
 ```text
-http://localhost:5173/api/ai/status
+https://rapid-sprint.onrender.com/api/ai/status
 ```
 
-It should show `"configured": true`. Google documents a Gemini API Free tier with free input and output tokens for supported models, and paid use as a separate upgrade. Free-tier prompts may be used to improve Google products. If Gemini is unavailable or `GEMINI_API_KEY` is missing, `[AI]` buttons show the error instead of silently using local fallback.
+It should show `"configured": true`. Google documents a Gemini API Free tier with free input and output tokens for supported models, and paid use as a separate upgrade. Free-tier prompts may be used to improve Google products. If Gemini is unavailable or returns malformed JSON, the GitHub Pages app continues with generated draft questions or ideas so a live workshop can proceed.
