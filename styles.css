@@ -283,6 +283,20 @@ h3 {
   font-weight: 760;
 }
 
+.summary-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 16px;
+}
+
+.summary-panel p,
+.summary-panel strong {
+  margin: 0;
+}
+
 .status-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

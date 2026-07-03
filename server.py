@@ -114,6 +114,16 @@ def extract_json_object(content):
 
 
 def gemini_response_schema(task):
+    if task == "frame_problem":
+        return {
+            "type": "OBJECT",
+            "properties": {
+                "problemSummary": {"type": "STRING"},
+                "hmwQuestion": {"type": "STRING"},
+            },
+            "required": ["problemSummary", "hmwQuestion"],
+        }
+
     if task == "generate_interview_questions":
         return {
             "type": "OBJECT",
@@ -263,7 +273,7 @@ def post_ai_generate():
     payload = request.get_json(silent=True) or {}
     task = payload.get("task")
     prompt = payload.get("prompt")
-    if task not in {"generate_interview_questions", "generate_ideas"} or not isinstance(prompt, str):
+    if task not in {"frame_problem", "generate_interview_questions", "generate_ideas"} or not isinstance(prompt, str):
         return jsonify({"error": "Expected task and prompt."}), 400
 
     try:

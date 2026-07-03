@@ -3,7 +3,7 @@
 A browser-based rapid AI design sprint workshop app with two roles:
 
 - **Human**: answer one interview question per screen, submit the interview with a speaker name, vote on ideas, and see the prototype outcome.
-- **Facilitator**: create the sprint, review AI-generated interview questions, monitor submissions, generate/add ideas, run voting, and export the result.
+- **Facilitator**: create the sprint, review the AI-framed problem and HMW question, review AI-generated interview questions, monitor submissions, generate/add ideas, run voting, and export the result.
 
 Facilitator manages the process. Humans contribute intelligence. AI accelerates in between.
 
@@ -17,7 +17,7 @@ Public app URL:
 https://yes-and-consulting.github.io/Rapid-Sprint/
 ```
 
-The GitHub Pages site is the participant and facilitator entry point. Humans answer one question per screen, and the Facilitator reviews responses, generates ideas, runs voting, and exports JSON.
+The GitHub Pages site is the participant and facilitator entry point. Humans answer one question per screen, and the Facilitator frames the problem, reviews responses, generates ideas, runs voting, and exports JSON.
 
 A GitHub Pages workflow is included in `.github/workflows/pages.yml`. After pushing to `main` or `master`, GitHub deploys the static app and exposes a live Pages URL. Facilitator invite links and QR codes route Humans to the Human-only view.
 

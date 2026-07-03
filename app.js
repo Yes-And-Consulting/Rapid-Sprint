@@ -14,6 +14,7 @@ const AI_REQUEST_TIMEOUT_MS = 20000;
 const STAGES = {
   HOME: "home",
   CREATE: "create",
+  PROBLEM_FRAMING: "problem_framing",
   REVIEW_QUESTIONS: "review_questions",
   INTERVIEWS: "interviews",
   IDEAS: "ideas",
@@ -24,6 +25,7 @@ const STAGES = {
 const facilitatorFlow = [
   [STAGES.HOME, "Home"],
   [STAGES.CREATE, "Create Sprint"],
+  [STAGES.PROBLEM_FRAMING, "Problem & HMW"],
   [STAGES.REVIEW_QUESTIONS, "Review & Edit Interview Questions"],
   [STAGES.INTERVIEWS, "Interview Stage"],
   [STAGES.IDEAS, "Generated Ideas"],
@@ -56,6 +58,39 @@ const FACILITATOR_PASSWORDS = [
 ];
 
 const promptLibrary = {
+  frameProblem: {
+    id: "frame_problem",
+    version: "1.0.0",
+    inputs: {
+      challenge: "Raw need, pain point, or challenge entered by the facilitator.",
+    },
+    template: `You are a senior design sprint facilitator helping frame a sprint.
+
+Read the facilitator's raw challenge and produce:
+1. A concise problem summary that names the user, situation, friction, and consequence.
+2. One strong How Might We question for the sprint.
+
+Quality bar:
+- Keep the problem summary to 1-2 sentences.
+- Keep the HMW question under 20 words.
+- Make the HMW question optimistic, open-ended, and focused on the human need.
+- Do not suggest a solution or feature.
+- Use concrete language from the challenge.
+- Return only valid JSON.
+
+Challenge:
+{{challenge}}
+
+Expected JSON:
+{
+  "problemSummary": "",
+  "hmwQuestion": ""
+}`,
+    expectedJson: {
+      problemSummary: "",
+      hmwQuestion: "",
+    },
+  },
   generateInterviewQuestions: {
     id: "generate_interview_questions",
     version: "1.0.0",
@@ -228,6 +263,8 @@ function createSprint(overrides = {}) {
     id,
     title: overrides.title || "Rapid Sprint",
     challenge: overrides.challenge || "",
+    problemSummary: overrides.problemSummary || "",
+    hmwQuestion: overrides.hmwQuestion || "",
     duration: overrides.duration || 45,
     inviteLink: overrides.inviteLink || makeInviteLink(id, STAGES.INTERVIEWS),
     currentStage: overrides.currentStage || STAGES.HOME,
@@ -561,6 +598,7 @@ function renderFacilitator() {
   const screen = {
     [STAGES.HOME]: renderFacilitatorHome,
     [STAGES.CREATE]: renderCreateSprint,
+    [STAGES.PROBLEM_FRAMING]: renderProblemFraming,
     [STAGES.REVIEW_QUESTIONS]: renderReviewQuestions,
     [STAGES.INTERVIEWS]: renderLiveDashboard,
     [STAGES.IDEAS]: renderFacilitatorIdeas,
@@ -642,7 +680,29 @@ function renderCreateSprint() {
         <textarea id="challenge" name="challenge" required placeholder="Description or focus question entered by the facilitator.">${escapeHtml(state.sprint.challenge)}</textarea>
       </div>
       <p class="status-message" id="createSprintStatus" role="status" aria-live="polite"></p>
-      <button type="button" id="createSprintButton">[AI] Generate Interview Questions</button>
+      <button type="button" id="createSprintButton">[AI] Frame Problem & HMW</button>
+    </form>
+  `;
+}
+
+function renderProblemFraming() {
+  return `
+    <form class="panel panel-pad grid" id="problemFramingForm">
+      <h1>Problem & HMW</h1>
+      <p class="lead">Review the AI-framed problem and How Might We question before generating interview questions.</p>
+      <div class="field">
+        <label for="problemSummary">Problem Summary</label>
+        <textarea id="problemSummary" name="problemSummary" required>${escapeHtml(state.sprint.problemSummary)}</textarea>
+      </div>
+      <div class="field">
+        <label for="hmwQuestion">How Might We Question</label>
+        <input id="hmwQuestion" name="hmwQuestion" required value="${escapeAttr(state.sprint.hmwQuestion)}">
+      </div>
+      <p class="status-message" id="problemFramingStatus" role="status" aria-live="polite"></p>
+      <div class="row">
+        <button type="button" class="secondary" id="regenerateProblemFrame">[AI] Regenerate</button>
+        <button type="submit">[AI] Generate Interview Questions</button>
+      </div>
     </form>
   `;
 }
@@ -653,6 +713,11 @@ function renderReviewQuestions() {
     <form class="panel panel-pad grid" id="reviewQuestionsForm">
       <h1>Review & Edit Interview Questions</h1>
       <p class="lead">Edit the three AI-generated questions before sending them to Humans.</p>
+      <section class="summary-panel">
+        <p class="eyebrow">Sprint Frame</p>
+        <p>${escapeHtml(state.sprint.problemSummary || "No problem summary yet.")}</p>
+        <strong>${escapeHtml(state.sprint.hmwQuestion || "")}</strong>
+      </section>
       ${questions.map((question, index) => `
         <div class="field question-edit">
           <label for="question-${index}">Question ${index + 1}: ${escapeHtml(question.title)}</label>
@@ -786,7 +851,7 @@ function renderHuman() {
 
 function renderHumanScreen() {
   const stage = state.sprint.currentStage;
-  if ([STAGES.HOME, STAGES.CREATE, STAGES.REVIEW_QUESTIONS].includes(stage)) return renderWaitingRoom();
+  if ([STAGES.HOME, STAGES.CREATE, STAGES.PROBLEM_FRAMING, STAGES.REVIEW_QUESTIONS].includes(stage)) return renderWaitingRoom();
   if (stage === STAGES.INTERVIEWS) return renderHumanInterviewFlow();
   if (stage === STAGES.IDEAS) return renderAfterSubmitWaiting();
   if (stage === STAGES.VOTING) return renderHumanVoting();
@@ -944,6 +1009,33 @@ function bindFacilitator() {
     }
   });
 
+  document.querySelector("#problemFramingForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await handleProblemFramingSubmit(event.target, event.submitter);
+  });
+
+  document.querySelector("#regenerateProblemFrame")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setInlineStatus("problemFramingStatus", "Reframing with hosted AI on Render...");
+    setButtonLoading(button, "[AI] Regenerating...");
+    try {
+      const framing = await frameProblemWithAi(state.sprint.challenge);
+      setState((draft) => {
+        draft.sprint.problemSummary = framing.problemSummary;
+        draft.sprint.hmwQuestion = framing.hmwQuestion;
+      });
+    } catch (error) {
+      console.warn("Remote AI failed while framing the problem; using generated draft framing.", error);
+      const framing = frameProblem(state.sprint.challenge);
+      setState((draft) => {
+        draft.sprint.problemSummary = framing.problemSummary;
+        draft.sprint.hmwQuestion = framing.hmwQuestion;
+      });
+    } finally {
+      restoreButton(button);
+    }
+  });
+
   document.querySelector("#reviewQuestionsForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     setState((draft) => {
@@ -1055,19 +1147,60 @@ function bindFacilitator() {
 async function handleCreateSprint(form, submitButton) {
   const title = form.elements.title.value.trim() || "Rapid Sprint";
   const challenge = form.elements.challenge.value.trim();
-  setInlineStatus("createSprintStatus", "Contacting hosted AI on Render...");
+  setInlineStatus("createSprintStatus", "Framing the problem with hosted AI on Render...");
   setButtonLoading(submitButton, "[AI] Generating...");
   try {
-    const interviewQuestions = await generateInterviewQuestionsWithAi(challenge);
-    setInlineStatus("createSprintStatus", "Questions generated. Opening review...");
-    createSprintWithQuestions(title, challenge, interviewQuestions);
+    const framing = await frameProblemWithAi(challenge);
+    setInlineStatus("createSprintStatus", "Problem framed. Opening review...");
+    createSprintWithFraming(title, challenge, framing);
   } catch (error) {
-    console.warn("Remote AI failed while creating questions; using generated draft questions.", error);
-    setInlineStatus("createSprintStatus", "Hosted AI did not respond cleanly. Opening editable draft questions...");
-    createSprintWithQuestions(title, challenge, generateInterviewQuestions(challenge));
+    console.warn("Remote AI failed while framing the problem; using generated draft framing.", error);
+    setInlineStatus("createSprintStatus", "Hosted AI did not respond cleanly. Opening editable draft framing...");
+    createSprintWithFraming(title, challenge, frameProblem(challenge));
   } finally {
     restoreButton(submitButton);
   }
+}
+
+async function handleProblemFramingSubmit(form, submitButton) {
+  const problemSummary = form.elements.problemSummary.value.trim();
+  const hmwQuestion = form.elements.hmwQuestion.value.trim();
+  const framedChallenge = buildFramedChallenge(state.sprint.challenge, problemSummary, hmwQuestion);
+  setInlineStatus("problemFramingStatus", "Generating interview questions with hosted AI on Render...");
+  setButtonLoading(submitButton, "[AI] Generating...");
+  try {
+    const interviewQuestions = await generateInterviewQuestionsWithAi(framedChallenge);
+    setState((draft) => {
+      draft.sprint.problemSummary = problemSummary;
+      draft.sprint.hmwQuestion = hmwQuestion;
+      draft.sprint.interviewQuestions = interviewQuestions;
+      draft.sprint.currentStage = STAGES.REVIEW_QUESTIONS;
+    });
+  } catch (error) {
+    console.warn("Remote AI failed while creating questions; using generated draft questions.", error);
+    setState((draft) => {
+      draft.sprint.problemSummary = problemSummary;
+      draft.sprint.hmwQuestion = hmwQuestion;
+      draft.sprint.interviewQuestions = generateInterviewQuestions(framedChallenge);
+      draft.sprint.currentStage = STAGES.REVIEW_QUESTIONS;
+    });
+  } finally {
+    restoreButton(submitButton);
+  }
+}
+
+function createSprintWithFraming(title, challenge, framing) {
+  const nextSprint = createSprint({
+    title,
+    challenge,
+    problemSummary: framing.problemSummary,
+    hmwQuestion: framing.hmwQuestion,
+    currentStage: STAGES.PROBLEM_FRAMING,
+  });
+  setState((draft) => {
+    draft.sprint = nextSprint;
+    draft.humanDraft = { responses: {}, speakerName: "", submitted: false };
+  });
 }
 
 function createSprintWithQuestions(title, challenge, interviewQuestions) {
@@ -1251,7 +1384,53 @@ function setStage(stage) {
 
 function getInterviewQuestions() {
   if (state.sprint.interviewQuestions.length) return state.sprint.interviewQuestions;
-  return generateInterviewQuestions(state.sprint.challenge || "Improve the current experience");
+  return generateInterviewQuestions(getSprintFramingText() || "Improve the current experience");
+}
+
+function frameProblem(challenge) {
+  const focus = summarizeChallenge(challenge);
+  return {
+    problemSummary: `People need a clearer, easier way to make progress with ${focus} when friction slows them down or leaves them unsure what to do next.`,
+    hmwQuestion: `How might we make ${focus} easier and clearer for people?`,
+  };
+}
+
+async function frameProblemWithAi(challenge) {
+  const prompt = renderPrompt(promptLibrary.frameProblem.template, {
+    challenge,
+  });
+  const result = await aiRequest(promptLibrary.frameProblem.id, prompt);
+  return normalizeProblemFrame(result, challenge);
+}
+
+function normalizeProblemFrame(frame, challenge) {
+  const fallback = frameProblem(challenge);
+  return {
+    problemSummary: requireAiText(frame?.problemSummary || fallback.problemSummary, "problem summary"),
+    hmwQuestion: normalizeHmwQuestion(frame?.hmwQuestion || fallback.hmwQuestion),
+  };
+}
+
+function normalizeHmwQuestion(value) {
+  let question = requireAiText(value, "How Might We question");
+  question = question.replace(/^how might we\s+/i, "How might we ");
+  if (!/^how might we\b/i.test(question)) {
+    question = `How might we ${question.charAt(0).toLowerCase()}${question.slice(1)}`;
+  }
+  if (!/[?]$/.test(question)) question = `${question.replace(/[.!\s]+$/g, "")}?`;
+  return question;
+}
+
+function getSprintFramingText() {
+  return buildFramedChallenge(state.sprint.challenge, state.sprint.problemSummary, state.sprint.hmwQuestion);
+}
+
+function buildFramedChallenge(challenge, problemSummary, hmwQuestion) {
+  return [
+    challenge ? `Raw challenge: ${challenge}` : "",
+    problemSummary ? `Problem summary: ${problemSummary}` : "",
+    hmwQuestion ? `How Might We question: ${hmwQuestion}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 function generateInterviewQuestions(challenge) {
@@ -1488,7 +1667,7 @@ function getCounts() {
 
 function getHumanStepIndex() {
   const stage = state.sprint.currentStage;
-  if ([STAGES.HOME, STAGES.CREATE, STAGES.REVIEW_QUESTIONS].includes(stage)) return 0;
+  if ([STAGES.HOME, STAGES.CREATE, STAGES.PROBLEM_FRAMING, STAGES.REVIEW_QUESTIONS].includes(stage)) return 0;
   if (stage === STAGES.INTERVIEWS) {
     if (state.humanDraft.submitted) return 5;
     const questions = getInterviewQuestions();
