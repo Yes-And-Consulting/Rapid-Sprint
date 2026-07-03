@@ -14,7 +14,7 @@ DATA_DIR = ROOT / ".data" / "sprints"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOCK = Lock()
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 
@@ -195,9 +195,10 @@ def post_ai_generate():
         return jsonify({"error": str(error)}), 503
     except urllib.error.HTTPError as error:
         details = error.read().decode("utf-8", errors="replace")
-        return jsonify({"error": "Remote AI request failed.", "details": details}), error.code
+        return jsonify({"error": f"Gemini request failed: {details}", "details": details}), error.code
     except Exception as error:
-        return jsonify({"error": "AI generation failed.", "details": str(error)}), 502
+        details = str(error)
+        return jsonify({"error": f"AI generation failed: {details}", "details": details}), 502
 
     return jsonify(result)
 

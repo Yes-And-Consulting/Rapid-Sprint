@@ -1,4 +1,5 @@
 const STORAGE_KEY = "rapidSprint.v2";
+const AUTH_STORAGE_KEY = "rapidSprint.auth.v1";
 
 const ROLE = {
   FACILITATOR: "facilitator",
@@ -38,6 +39,19 @@ const humanFlow = [
   "After Submit / Waiting",
   "Idea Voting",
   "Prototype & Done",
+];
+
+const FACILITATOR_PASSWORDS = [
+  "north-cedar-47",
+  "bright-river-82",
+  "steady-maple-19",
+  "silver-harbor-64",
+  "quiet-signal-31",
+  "open-canyon-58",
+  "clear-meadow-26",
+  "warm-anchor-73",
+  "fresh-lantern-95",
+  "solid-compass-40",
 ];
 
 const promptLibrary = {
@@ -198,6 +212,7 @@ const ideaSeeds = [
 ];
 
 const state = loadState();
+const authState = loadAuthState();
 let speechRecognition = null;
 let isTranscribing = false;
 let currentRecordingQuestionId = "";
@@ -278,6 +293,22 @@ function normalizeState(raw) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function loadAuthState() {
+  try {
+    return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY)) || { facilitator: null };
+  } catch (error) {
+    return { facilitator: null };
+  }
+}
+
+function saveAuthState() {
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authState));
+}
+
+function isFacilitatorUnlocked() {
+  return Boolean(authState.facilitator?.email);
 }
 
 function setState(mutator) {
@@ -440,21 +471,78 @@ function appShell(content) {
     <div class="shell">
       <header class="topbar">
         <div class="brand"><span class="mark">RS</span><span>${escapeHtml(state.sprint.title)}</span></div>
-        ${isHumanInviteRoute() ? "" : `<div class="mode-switch" aria-label="Role">
-          <button class="${state.role === ROLE.HUMAN ? "active" : ""}" data-role="${ROLE.HUMAN}">Human</button>
-          <button class="${state.role === ROLE.FACILITATOR ? "active" : ""}" data-role="${ROLE.FACILITATOR}">Facilitator</button>
-        </div>`}
+        ${renderTopbarControls()}
       </header>
       <section class="workspace">${content}</section>
     </div>
   `;
 }
 
+function renderTopbarControls() {
+  if (isHumanInviteRoute()) return "";
+  return `<div class="topbar-actions">
+    ${isFacilitatorUnlocked() ? `<span class="muted auth-email">${escapeHtml(authState.facilitator.email)}</span>` : ""}
+    <div class="mode-switch" aria-label="Role">
+      <button class="${state.role === ROLE.HUMAN ? "active" : ""}" data-role="${ROLE.HUMAN}">Human</button>
+      <button class="${state.role === ROLE.FACILITATOR ? "active" : ""}" data-role="${ROLE.FACILITATOR}">Facilitator</button>
+    </div>
+    ${isFacilitatorUnlocked() ? `<button type="button" class="secondary small-button" id="signOutFacilitator">Sign Out</button>` : ""}
+  </div>`;
+}
+
 function render() {
   const app = document.querySelector("#app");
-  app.innerHTML = appShell(state.role === ROLE.FACILITATOR ? renderFacilitator() : renderHuman());
+  const content = state.role === ROLE.FACILITATOR && !isFacilitatorUnlocked()
+    ? renderFacilitatorLogin()
+    : state.role === ROLE.FACILITATOR ? renderFacilitator() : renderHuman();
+  app.innerHTML = appShell(content);
   bindCommon();
-  state.role === ROLE.FACILITATOR ? bindFacilitator() : bindHuman();
+  if (state.role === ROLE.FACILITATOR && !isFacilitatorUnlocked()) {
+    bindFacilitatorLogin();
+  } else {
+    state.role === ROLE.FACILITATOR ? bindFacilitator() : bindHuman();
+  }
+}
+
+function renderFacilitatorLogin() {
+  return `
+    <form class="panel panel-pad grid login-panel" id="facilitatorLoginForm">
+      <div>
+        <p class="eyebrow">Facilitator Access</p>
+        <h1>Sign in to start.</h1>
+        <p class="lead">Use the email and password provided for this test group.</p>
+      </div>
+      <div class="field">
+        <label for="facilitatorEmail">Email</label>
+        <input id="facilitatorEmail" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="facilitatorPassword">Password</label>
+        <input id="facilitatorPassword" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <p class="danger-text" id="loginError" hidden></p>
+      <button type="submit">Sign In</button>
+    </form>
+  `;
+}
+
+function bindFacilitatorLogin() {
+  document.querySelector("#facilitatorLoginForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const email = event.target.elements.email.value.trim().toLowerCase();
+    const password = event.target.elements.password.value.trim();
+    if (!FACILITATOR_PASSWORDS.includes(password)) {
+      const error = document.querySelector("#loginError");
+      if (error) {
+        error.hidden = false;
+        error.textContent = "Invalid email or password.";
+      }
+      return;
+    }
+    authState.facilitator = { email, signedInAt: new Date().toISOString() };
+    saveAuthState();
+    render();
+  });
 }
 
 function renderFacilitator() {
@@ -801,6 +889,11 @@ function renderIdea(idea, withControls = false) {
 function bindCommon() {
   document.querySelectorAll("[data-role]").forEach((button) => {
     button.addEventListener("click", () => setState({ role: button.dataset.role }));
+  });
+  document.querySelector("#signOutFacilitator")?.addEventListener("click", () => {
+    authState.facilitator = null;
+    saveAuthState();
+    render();
   });
 }
 

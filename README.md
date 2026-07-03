@@ -45,7 +45,7 @@ Plan: Free
 
 ```text
 GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 CORS_ORIGIN=https://yes-and-consulting.github.io
 ```
 
@@ -73,6 +73,27 @@ https://yes-and-consulting.github.io/RapidSprint/?api=https://your-render-servic
 
 Render free services may sleep after inactivity. The first request after sleeping can take a little longer.
 
+## Facilitator Test Access
+
+The Facilitator flow has a lightweight email/password gate. There is no account creation screen. Human invite links skip this gate.
+
+For early testing, any email address works with one of these passwords:
+
+```text
+north-cedar-47
+bright-river-82
+steady-maple-19
+silver-harbor-64
+quiet-signal-31
+open-canyon-58
+clear-meadow-26
+warm-anchor-73
+fresh-lantern-95
+solid-compass-40
+```
+
+To rotate or add passwords, edit `FACILITATOR_PASSWORDS` in `app.js`, commit, and push. This is a tester gate, not strong security, because GitHub Pages JavaScript is public.
+
 ## Optional Local Server
 
 The Python server is required for Gemini AI generation and live shared sprint state. AI buttons call Gemini through the local Flask API, which keeps your Gemini API key on the server instead of exposing it in the browser. The static GitHub Pages version cannot call Gemini safely unless you deploy the Flask API and pass its URL with `?api=...`.
@@ -87,7 +108,7 @@ Edit `.env`:
 
 ```text
 GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 Then start the app:
@@ -105,7 +126,7 @@ http://localhost:5173
 By default RapidSprint uses:
 
 ```text
-gemini-3.5-flash
+gemini-2.5-flash
 ```
 
 After starting the server, check Gemini configuration:
